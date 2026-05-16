@@ -5,6 +5,11 @@
 <template>
   <el-card v-if="detail">
     <h2>{{ detail.title }}</h2>
+    <el-carousel v-if="detail.imageUrls?.length" height="320px">
+      <el-carousel-item v-for="(url, idx) in detail.imageUrls" :key="idx">
+        <div class="slide" :style="{ backgroundImage: `url(${url})` }" />
+      </el-carousel-item>
+    </el-carousel>
     <p class="muted">
       预算：
       <span v-if="detail.budgetMin != null || detail.budgetMax != null">
@@ -48,6 +53,7 @@ type Detail = {
   categoryName: string;
   userId: number;
   userNickname: string;
+  imageUrls?: string[];
 };
 
 const detail = ref<Detail | null>(null);
@@ -92,5 +98,12 @@ onMounted(async () => {
   white-space: pre-wrap;
   line-height: 1.6;
   margin: 16px 0;
+}
+.slide {
+  height: 320px;
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-color: #f5f7fa;
 }
 </style>

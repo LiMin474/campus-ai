@@ -2,6 +2,7 @@ package com.campus.wanted.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import lombok.Builder;
 import lombok.Data;
 
@@ -18,5 +19,8 @@ public class WantedResponse {
     private Long userId;
     private String userNickname;
     private String status;
+    private Integer viewCount;
     private LocalDateTime createdAt;
+    private String coverImage;
+    private List<String> imageUrls;
 }

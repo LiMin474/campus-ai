@@ -19,6 +19,7 @@ public class Wanted {
     private BigDecimal budgetMax;
     private Long categoryId;
     private String status;
+    private Integer viewCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 }

@@ -119,10 +119,10 @@
         <el-card shadow="hover" class="card" @click="goDetail(p.id)">
           <div class="cover" :style="coverStyle(p.coverImage)" />
           <div class="title">{{ p.title }}</div>
-          <div class="price">¥{{ p.price }}</div>
+          <div class="price">{{ priceText(p) }}</div>
           <div class="meta">
-            <span>{{ p.sellerNickname }}</span>
-            <span>{{ p.viewCount }} 浏览</span>
+            <span>{{ publisherName(p) }}</span>
+            <span>{{ p.viewCount ?? 0 }} 浏览</span>
           </div>
         </el-card>
       </el-col>
@@ -152,9 +152,12 @@ type Category = { id: number; name: string };
 type Item = {
   id: number;
   title: string;
-  price: number;
-  sellerNickname: string;
-  viewCount: number;
+  price?: number;
+  budgetMin?: number | null;
+  budgetMax?: number | null;
+  sellerNickname?: string;
+  userNickname?: string;
+  viewCount?: number;
   coverImage?: string | null;
 };
 
@@ -179,6 +182,23 @@ function coverStyle(url?: string | null) {
     backgroundSize: "cover",
     backgroundPosition: "center",
   };
+}
+
+function priceText(p: Item) {
+  if (activeTab.value === "wanted") {
+    if (p.budgetMin != null || p.budgetMax != null) {
+      return `¥${p.budgetMin ?? "?"} - ¥${p.budgetMax ?? "?"}`;
+    }
+    return "面议";
+  }
+  return `¥${p.price ?? ""}`;
+}
+
+function publisherName(p: Item) {
+  if (activeTab.value === "wanted") {
+    return p.userNickname || "匿名";
+  }
+  return p.sellerNickname || "匿名";
 }
 
 async function load() {

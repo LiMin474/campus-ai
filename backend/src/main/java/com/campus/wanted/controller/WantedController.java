@@ -34,10 +34,21 @@ public class WantedController {
     @GetMapping
     public ApiResponse<Page<WantedResponse>> page(
         @RequestParam(required = false) Long categoryId,
+        @RequestParam(required = false) String keyword,
+        @RequestParam(defaultValue = "latest") String sort,
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "10") int size
     ) {
-        return ApiResponse.success(wantedService.page(categoryId, page, size));
+        return ApiResponse.success(wantedService.page(categoryId, keyword, sort, page, size));
+    }
+
+    @GetMapping("/me")
+    public ApiResponse<Page<WantedResponse>> mine(
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "10") int size
+    ) {
+        Long userId = SecurityUtils.requireUserId();
+        return ApiResponse.success(wantedService.pageMine(userId, page, size));
     }
 
     @GetMapping("/{id}")
@@ -62,6 +73,13 @@ public class WantedController {
     public ApiResponse<Void> close(@PathVariable Long id) {
         Long userId = SecurityUtils.requireUserId();
         wantedService.close(userId, id);
+        return ApiResponse.success();
+    }
+
+    @PostMapping("/{id}/reopen")
+    public ApiResponse<Void> reopen(@PathVariable Long id) {
+        Long userId = SecurityUtils.requireUserId();
+        wantedService.reopen(userId, id);
         return ApiResponse.success();
     }
 }
