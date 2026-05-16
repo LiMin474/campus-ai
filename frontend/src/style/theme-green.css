@@ -1,0 +1,294 @@
+/* 绿色主题 - 覆盖 Element Plus 默认样式 */
+
+/* 主色调 */
+:root {
+  --el-color-primary: #0f9d58;
+  --el-color-primary-light-3: #34a853;
+  --el-color-primary-light-5: #43b06a;
+  --el-color-primary-light-7: #6bc48a;
+  --el-color-primary-light-8: #91d3a8;
+  --el-color-primary-light-9: #c6e8d3;
+  --el-color-primary-dark-2: #0d834a;
+}
+
+/* Button 组件 */
+.el-button--primary {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+  color: #fff !important;
+}
+
+.el-button--primary:hover,
+.el-button--primary:focus {
+  background-color: var(--el-color-primary-light-3) !important;
+  border-color: var(--el-color-primary-light-3) !important;
+}
+
+.el-button--primary:active {
+  background-color: var(--el-color-primary-dark-2) !important;
+  border-color: var(--el-color-primary-dark-2) !important;
+}
+
+/* Link 按钮不应该有背景色 */
+.el-button--primary.el-button--link {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: var(--el-color-primary) !important;
+}
+
+.el-button--primary.el-button--link:hover,
+.el-button--primary.el-button--link:focus {
+  background-color: rgba(15, 157, 88, 0.1) !important;
+  border-color: transparent !important;
+  color: var(--el-color-primary) !important;
+}
+
+/* Input 组件 */
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 2px rgba(15, 157, 88, 0.2) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+.el-input-group__append .el-button,
+.el-input-group__prepend .el-button {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+  color: #fff !important;
+}
+
+/* Select 组件 */
+.el-select-dropdown__item.selected {
+  color: var(--el-color-primary) !important;
+}
+
+.el-select .el-input.is-focus .el-input__wrapper {
+  box-shadow: 0 0 0 2px rgba(15, 157, 88, 0.2) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+/* Checkbox 组件 */
+.el-checkbox__input.is-checked .el-checkbox__inner {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+.el-checkbox__input.is-indeterminate .el-checkbox__inner {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+/* Radio 组件 */
+.el-radio__input.is-checked .el-radio__inner {
+  border-color: var(--el-color-primary) !important;
+}
+
+.el-radio__input.is-checked .el-radio__inner::after {
+  background-color: var(--el-color-primary) !important;
+}
+
+/* Switch 组件 */
+.el-switch.is-checked {
+  background-color: var(--el-color-primary) !important;
+}
+
+/* Slider 组件 */
+.el-slider__runway {
+  background-color: var(--el-color-primary) !important;
+}
+
+.el-slider__button {
+  border-color: var(--el-color-primary) !important;
+}
+
+/* Progress 组件 */
+.el-progress-bar__inner {
+  background-color: var(--el-color-primary) !important;
+}
+
+/* Badge 组件 */
+.el-badge__content.is-fixed {
+  background-color: var(--el-color-primary) !important;
+}
+
+/* Tag 组件 */
+.el-tag.el-tag--primary {
+  background-color: rgba(15, 157, 88, 0.1) !important;
+  border-color: var(--el-color-primary) !important;
+  color: var(--el-color-primary) !important;
+}
+
+/* Card 组件 */
+.el-card.is-hover-shadow:hover {
+  box-shadow: 0 4px 20px rgba(15, 157, 88, 0.15) !important;
+}
+
+/* Menu 组件 */
+.el-menu-item.is-active {
+  color: var(--el-color-primary) !important;
+}
+
+.el-menu-item.is-active::after {
+  background-color: var(--el-color-primary) !important;
+}
+
+/* Tabs 组件 */
+.el-tabs__active-bar {
+  background-color: var(--el-color-primary) !important;
+}
+
+.el-tabs__item.is-active {
+  color: var(--el-color-primary) !important;
+}
+
+/* Pagination 组件 */
+.el-pagination .btn-next,
+.el-pagination .btn-prev {
+  color: var(--el-color-primary) !important;
+}
+
+.el-pagination .el-pager li {
+  color: #606266 !important;
+}
+
+.el-pagination .el-pager li:hover {
+  color: var(--el-color-primary) !important;
+}
+
+.el-pagination .el-pager li.is-active {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+  color: #fff !important;
+}
+
+/* Table 组件 */
+.el-table th {
+  background-color: rgba(15, 157, 88, 0.05) !important;
+}
+
+.el-table--striped .el-table__body tr.el-table__row--striped td {
+  background-color: rgba(15, 157, 88, 0.03) !important;
+}
+
+.el-table__row.current-row > td {
+  background-color: rgba(15, 157, 88, 0.08) !important;
+}
+
+/* Dialog 组件 */
+.el-dialog__header {
+  border-bottom: 1px solid rgba(15, 157, 88, 0.2) !important;
+}
+
+/* Tooltip 组件 */
+.el-tooltip__popper.is-dark {
+  background-color: rgba(15, 157, 88, 0.95) !important;
+}
+
+/* Message 组件 */
+.el-message--success {
+  background-color: rgba(15, 157, 88, 0.1) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+.el-message--success .el-message__icon {
+  color: var(--el-color-primary) !important;
+}
+
+/* Notification 组件 */
+.el-notification {
+  border-left-color: var(--el-color-primary) !important;
+}
+
+/* Popover 组件 */
+.el-popover {
+  border-color: var(--el-color-primary) !important;
+}
+
+/* Timeline 组件 */
+.el-timeline-item__dot {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+/* Rate 组件 */
+.el-rate__icon.is-active {
+  color: var(--el-color-primary) !important;
+}
+
+/* Steps 组件 */
+.el-step.is-finish .el-step__icon {
+  background-color: var(--el-color-primary) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+.el-step.is-finish .el-step__title {
+  color: var(--el-color-primary) !important;
+}
+
+/* Tree 组件 */
+.el-tree-node.is-current > .el-tree-node__content {
+  background-color: rgba(15, 157, 88, 0.08) !important;
+}
+
+.el-tree-node__expand-icon.is-expanded {
+  color: var(--el-color-primary) !important;
+}
+
+/* Upload 组件 */
+.el-upload--picture-card:hover {
+  border-color: var(--el-color-primary) !important;
+}
+
+.el-upload-dragger.is-dragover {
+  border-color: var(--el-color-primary) !important;
+  background-color: rgba(15, 157, 88, 0.1) !important;
+}
+
+/* DatePicker 组件 */
+.el-date-picker .el-input.is-focus .el-input__wrapper {
+  box-shadow: 0 0 0 2px rgba(15, 157, 88, 0.2) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+.el-date-table td.today span {
+  color: var(--el-color-primary) !important;
+}
+
+.el-date-table td.selected span {
+  background-color: var(--el-color-primary) !important;
+}
+
+/* TimePicker 组件 */
+.el-time-panel__btn.confirm {
+  color: var(--el-color-primary) !important;
+}
+
+.el-time-panel__active {
+  color: var(--el-color-primary) !important;
+}
+
+/* Cascader 组件 */
+.el-cascader.is-focus .el-input__wrapper {
+  box-shadow: 0 0 0 2px rgba(15, 157, 88, 0.2) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+/* Transfer 组件 */
+.el-transfer-panel__item.is-selected {
+  background-color: rgba(15, 157, 88, 0.1) !important;
+  border-color: var(--el-color-primary) !important;
+}
+
+/* ColorPicker 组件 */
+.el-color-picker__trigger {
+  border-color: var(--el-color-primary) !important;
+}
+
+/* Divider 组件 */
+.el-divider--vertical {
+  background-color: rgba(15, 157, 88, 0.2) !important;
+}
+
+/* Loading 组件 */
+.el-loading-spinner .path {
+  stroke: var(--el-color-primary) !important;
+}
