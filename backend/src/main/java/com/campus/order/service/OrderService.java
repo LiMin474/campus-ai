@@ -39,17 +39,20 @@ public class OrderService {
     private final TradeOrderMapper tradeOrderMapper;
     private final ProductMapper productMapper;
     private final UserMapper userMapper;
+    private final ProductService productService;
     private final String frontendBaseUrl;
 
     public OrderService(
         TradeOrderMapper tradeOrderMapper,
         ProductMapper productMapper,
         UserMapper userMapper,
+        ProductService productService,
         @Value("${app.frontend-base-url:http://localhost:5173}") String frontendBaseUrl
     ) {
         this.tradeOrderMapper = tradeOrderMapper;
         this.productMapper = productMapper;
         this.userMapper = userMapper;
+        this.productService = productService;
         this.frontendBaseUrl = frontendBaseUrl.endsWith("/")
             ? frontendBaseUrl.substring(0, frontendBaseUrl.length() - 1)
             : frontendBaseUrl;
@@ -269,10 +272,23 @@ public class OrderService {
             Product p = productMap.get(o.getProductId());
             User buyer = userMap.get(o.getBuyerId());
             User seller = userMap.get(o.getSellerId());
+            
+            String productImage = null;
+            String productType = "product";
+            if (p != null) {
+                List<String> images = productService.getProductImages(o.getProductId());
+                if (!images.isEmpty()) {
+                    productImage = images.get(0);
+                }
+                productType = "product";
+            }
+            
             return OrderResponse.builder()
                 .id(o.getId())
                 .productId(o.getProductId())
                 .productTitle(p != null ? p.getTitle() : null)
+                .productImage(productImage)
+                .productType(productType)
                 .buyerId(o.getBuyerId())
                 .buyerNickname(buyer != null ? buyer.getNickname() : null)
                 .sellerId(o.getSellerId())

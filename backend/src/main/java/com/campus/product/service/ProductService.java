@@ -338,4 +338,11 @@ public class ProductService {
         }
     }
 
+    public List<String> getProductImages(Long productId) {
+        List<ProductImage> images = productImageMapper.selectList(new LambdaQueryWrapper<ProductImage>()
+            .eq(ProductImage::getProductId, productId)
+            .orderByAsc(ProductImage::getSortOrder));
+        return images.stream().map(ProductImage::getImageUrl).toList();
+    }
+
 }

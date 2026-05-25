@@ -63,8 +63,8 @@
             <el-button link type="primary" @click="$router.push('/orders')"
               >我的订单</el-button
             >
-            <el-button link type="primary" @click="$router.push('/my-products')"
-              >我的商品</el-button
+            <el-button link type="primary" @click="$router.push('/my-publish')"
+              >我的发布</el-button
             >
             <el-button link type="primary" @click="$router.push('/profile')"
               >个人中心</el-button

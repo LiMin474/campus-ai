@@ -26,7 +26,18 @@
         </el-select>
       </el-form-item>
       <el-form-item label="描述">
-        <el-input v-model="form.description" type="textarea" rows="5" maxlength="5000" show-word-limit />
+        <div class="description-wrapper">
+          <el-input v-model="form.description" type="textarea" rows="5" maxlength="5000" show-word-limit />
+          <el-button
+            type="primary"
+            icon="Sparkles"
+            class="ai-button"
+            @click="polishDescription"
+            :loading="polishing"
+          >
+            AI润色
+          </el-button>
+        </div>
       </el-form-item>
       <el-form-item label="图片">
         <el-upload
@@ -62,6 +73,7 @@ const router = useRouter();
 const categories = ref<Category[]>([]);
 const imageUrls = ref<string[]>([]);
 const loading = ref(false);
+const polishing = ref(false);
 
 const fileList = computed<UploadUserFile[]>(() =>
   imageUrls.value.map((url, idx) => ({
@@ -140,6 +152,29 @@ async function submit() {
   }
 }
 
+async function polishDescription() {
+  if (!form.description.trim()) {
+    ElMessage.warning("请先输入描述内容");
+    return;
+  }
+  polishing.value = true;
+  try {
+    const { data } = await http.post<ApiResponse<{ text: string }>>("/api/ai/polish", {
+      text: form.description
+    });
+    if (data.code === 200) {
+      form.description = data.data.text;
+      ElMessage.success("润色完成");
+    } else {
+      ElMessage.error(data.message || "润色失败");
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || "润色失败");
+  } finally {
+    polishing.value = false;
+  }
+}
+
 onMounted(async () => {
   await loadCategories();
 });
@@ -154,5 +189,25 @@ onMounted(async () => {
   font-size: 12px;
   color: #909399;
   margin-top: 6px;
+}
+
+.description-wrapper {
+  position: relative;
+  padding-bottom: 50px;
+  width: 100%;
+}
+.description-wrapper .el-input {
+  width: 100% !important;
+}
+.description-wrapper .el-textarea {
+  width: 100% !important;
+}
+.ai-button {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  padding: 10px 30px;
+  font-size: 15px;
+  min-width: 100px;
 }
 </style>
