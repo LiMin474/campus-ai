@@ -1,10 +1,17 @@
 package com.campus.admin.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.admin.dto.AdminDashboardResponse;
 import com.campus.admin.dto.AdminDashboardResponse.CategoryStat;
 import com.campus.admin.dto.AdminDashboardResponse.DailyStat;
+import com.campus.admin.dto.AdminDashboardResponse.RecentActivity;
 import com.campus.admin.dto.AdminDashboardResponse.StatusStat;
+import com.campus.admin.dto.AdminOrderResponse;
+import com.campus.admin.dto.AdminPostResponse;
+import com.campus.admin.dto.AdminProductResponse;
+import com.campus.admin.dto.PageResponse;
 import com.campus.category.entity.Category;
 import com.campus.category.mapper.CategoryMapper;
 import com.campus.community.entity.CommunityPost;
@@ -21,6 +28,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -73,6 +81,9 @@ public class AdminService {
         // 商品状态统计
         List<StatusStat> productStatusStats = generateProductStatusStats();
 
+        // 最近活动
+        List<RecentActivity> recentActivities = generateRecentActivities();
+
         return AdminDashboardResponse.builder()
             .userCount(users)
             .productCount(products)
@@ -84,6 +95,7 @@ public class AdminService {
             .categoryStats(categoryStats)
             .orderStatusStats(orderStatusStats)
             .productStatusStats(productStatusStats)
+            .recentActivities(recentActivities)
             .build();
     }
 
@@ -96,19 +108,15 @@ public class AdminService {
             LocalDateTime start = date.atStartOfDay();
             LocalDateTime end = date.plusDays(1).atStartOfDay();
 
-            // 每日用户注册数
             long dailyUsers = userMapper.selectCount(new LambdaQueryWrapper<User>()
                 .between(User::getCreatedAt, start, end));
 
-            // 每日商品发布数
             long dailyProducts = productMapper.selectCount(new LambdaQueryWrapper<Product>()
                 .between(Product::getCreatedAt, start, end));
 
-            // 每日订单数
             long dailyOrders = orderMapper.selectCount(new LambdaQueryWrapper<TradeOrder>()
                 .between(TradeOrder::getCreatedAt, start, end));
 
-            // 每日销售额
             BigDecimal dailySales = orderMapper.selectList(new LambdaQueryWrapper<TradeOrder>()
                 .between(TradeOrder::getCreatedAt, start, end)
                 .eq(TradeOrder::getStatus, "COMPLETED"))
@@ -133,11 +141,9 @@ public class AdminService {
         List<CategoryStat> stats = new ArrayList<>();
 
         for (Category category : categories) {
-            // 分类商品数
             long productCount = productMapper.selectCount(new LambdaQueryWrapper<Product>()
                 .eq(Product::getCategoryId, category.getId()));
 
-            // 分类销售额
             BigDecimal salesAmount = orderMapper.selectList(new LambdaQueryWrapper<TradeOrder>()
                 .inSql(TradeOrder::getProductId, "SELECT id FROM product WHERE category_id = " + category.getId())
                 .eq(TradeOrder::getStatus, "COMPLETED"))
@@ -181,6 +187,50 @@ public class AdminService {
             .collect(Collectors.toList());
     }
 
+    private List<RecentActivity> generateRecentActivities() {
+        List<RecentActivity> activities = new ArrayList<>();
+        
+        // 获取最近的用户注册
+        List<User> recentUsers = userMapper.selectList(new LambdaQueryWrapper<User>()
+            .orderByDesc(User::getCreatedAt)
+            .last("LIMIT 5"));
+        for (User user : recentUsers) {
+            activities.add(RecentActivity.builder()
+                .type("USER_REGISTER")
+                .description("用户 " + user.getNickname() + " 注册")
+                .timestamp(user.getCreatedAt())
+                .build());
+        }
+
+        // 获取最近的商品发布
+        List<Product> recentProducts = productMapper.selectList(new LambdaQueryWrapper<Product>()
+            .orderByDesc(Product::getCreatedAt)
+            .last("LIMIT 5"));
+        for (Product product : recentProducts) {
+            activities.add(RecentActivity.builder()
+                .type("PRODUCT_CREATE")
+                .description("商品 " + product.getTitle() + " 发布")
+                .timestamp(product.getCreatedAt())
+                .build());
+        }
+
+        // 获取最近的订单创建
+        List<TradeOrder> recentOrders = orderMapper.selectList(new LambdaQueryWrapper<TradeOrder>()
+            .orderByDesc(TradeOrder::getCreatedAt)
+            .last("LIMIT 5"));
+        for (TradeOrder order : recentOrders) {
+            activities.add(RecentActivity.builder()
+                .type("ORDER_CREATE")
+                .description("订单 #" + order.getId() + " 创建")
+                .timestamp(order.getCreatedAt())
+                .build());
+        }
+
+        // 按时间排序
+        activities.sort(Comparator.comparing(RecentActivity::getTimestamp).reversed());
+        return activities.stream().limit(10).collect(Collectors.toList());
+    }
+
     public List<User> listUsers(String keyword) {
         LambdaQueryWrapper<User> wrapper = new LambdaQueryWrapper<>();
         if (keyword != null && !keyword.isBlank()) {
@@ -213,5 +263,179 @@ public class AdminService {
         }
         user.setCreditScore(score);
         userMapper.updateById(user);
+    }
+
+    // ========== 商品管理 ==========
+    
+    public PageResponse<AdminProductResponse> listProducts(int page, int size, String keyword, String status) {
+        IPage<Product> productPage = productMapper.selectPage(
+            new Page<>(page, size),
+            new LambdaQueryWrapper<Product>()
+                .like(keyword != null && !keyword.isBlank(), Product::getTitle, keyword.trim())
+                .eq(status != null && !status.isBlank(), Product::getStatus, status)
+                .orderByDesc(Product::getCreatedAt)
+        );
+
+        List<Long> sellerIds = productPage.getRecords().stream()
+            .map(Product::getSellerId)
+            .distinct()
+            .collect(Collectors.toList());
+        
+        Map<Long, User> sellerMap = sellerIds.isEmpty() ? Map.of() :
+            userMapper.selectBatchIds(sellerIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        List<Long> categoryIds = productPage.getRecords().stream()
+            .map(Product::getCategoryId)
+            .distinct()
+            .collect(Collectors.toList());
+        
+        Map<Long, Category> categoryMap = categoryIds.isEmpty() ? Map.of() :
+            categoryMapper.selectBatchIds(categoryIds).stream()
+                .collect(Collectors.toMap(Category::getId, c -> c));
+
+        List<AdminProductResponse> items = productPage.getRecords().stream()
+            .map(product -> AdminProductResponse.fromEntity(
+                product,
+                categoryMap.get(product.getCategoryId()) != null ? 
+                    categoryMap.get(product.getCategoryId()).getName() : "未知",
+                sellerMap.get(product.getSellerId()) != null ? 
+                    sellerMap.get(product.getSellerId()).getNickname() : "未知"
+            ))
+            .collect(Collectors.toList());
+
+        return PageResponse.<AdminProductResponse>builder()
+            .items(items)
+            .total(productPage.getTotal())
+            .page(page)
+            .size(size)
+            .totalPages((int) Math.ceil((double) productPage.getTotal() / size))
+            .build();
+    }
+
+    @Transactional
+    public void deleteProduct(Long productId) {
+        Product product = productMapper.selectById(productId);
+        if (product == null) {
+            throw new IllegalArgumentException("商品不存在");
+        }
+        productMapper.deleteById(productId);
+    }
+
+    @Transactional
+    public void updateProductStatus(Long productId, String status) {
+        Product product = productMapper.selectById(productId);
+        if (product == null) {
+            throw new IllegalArgumentException("商品不存在");
+        }
+        product.setStatus(status);
+        product.setUpdatedAt(LocalDateTime.now());
+        productMapper.updateById(product);
+    }
+
+    // ========== 帖子管理 ==========
+    
+    public PageResponse<AdminPostResponse> listPosts(int page, int size, String keyword) {
+        IPage<CommunityPost> postPage = postMapper.selectPage(
+            new Page<>(page, size),
+            new LambdaQueryWrapper<CommunityPost>()
+                .like(keyword != null && !keyword.isBlank(), CommunityPost::getTitle, keyword.trim())
+                .orderByDesc(CommunityPost::getCreatedAt)
+        );
+
+        List<Long> userIds = postPage.getRecords().stream()
+            .map(CommunityPost::getUserId)
+            .distinct()
+            .collect(Collectors.toList());
+        
+        Map<Long, User> userMap = userIds.isEmpty() ? Map.of() :
+            userMapper.selectBatchIds(userIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        List<AdminPostResponse> items = postPage.getRecords().stream()
+            .map(post -> AdminPostResponse.fromEntity(
+                post,
+                userMap.get(post.getUserId()) != null ? 
+                    userMap.get(post.getUserId()).getNickname() : "未知"
+            ))
+            .collect(Collectors.toList());
+
+        return PageResponse.<AdminPostResponse>builder()
+            .items(items)
+            .total(postPage.getTotal())
+            .page(page)
+            .size(size)
+            .totalPages((int) Math.ceil((double) postPage.getTotal() / size))
+            .build();
+    }
+
+    @Transactional
+    public void deletePost(Long postId) {
+        CommunityPost post = postMapper.selectById(postId);
+        if (post == null) {
+            throw new IllegalArgumentException("帖子不存在");
+        }
+        postMapper.deleteById(postId);
+    }
+
+    // ========== 订单管理 ==========
+    
+    public PageResponse<AdminOrderResponse> listOrders(int page, int size, String status) {
+        IPage<TradeOrder> orderPage = orderMapper.selectPage(
+            new Page<>(page, size),
+            new LambdaQueryWrapper<TradeOrder>()
+                .eq(status != null && !status.isBlank(), TradeOrder::getStatus, status)
+                .orderByDesc(TradeOrder::getCreatedAt)
+        );
+
+        List<Long> productIds = orderPage.getRecords().stream()
+            .map(TradeOrder::getProductId)
+            .distinct()
+            .collect(Collectors.toList());
+        
+        Map<Long, Product> productMap = productIds.isEmpty() ? Map.of() :
+            productMapper.selectBatchIds(productIds).stream()
+                .collect(Collectors.toMap(Product::getId, p -> p));
+
+        List<Long> userIds = new ArrayList<>();
+        orderPage.getRecords().forEach(order -> {
+            userIds.add(order.getBuyerId());
+            userIds.add(order.getSellerId());
+        });
+        
+        Map<Long, User> userMap = userIds.isEmpty() ? Map.of() :
+            userMapper.selectBatchIds(userIds).stream()
+                .collect(Collectors.toMap(User::getId, u -> u));
+
+        List<AdminOrderResponse> items = orderPage.getRecords().stream()
+            .map(order -> AdminOrderResponse.fromEntity(
+                order,
+                productMap.get(order.getProductId()) != null ? 
+                    productMap.get(order.getProductId()).getTitle() : "未知商品",
+                userMap.get(order.getBuyerId()) != null ? 
+                    userMap.get(order.getBuyerId()).getNickname() : "未知",
+                userMap.get(order.getSellerId()) != null ? 
+                    userMap.get(order.getSellerId()).getNickname() : "未知"
+            ))
+            .collect(Collectors.toList());
+
+        return PageResponse.<AdminOrderResponse>builder()
+            .items(items)
+            .total(orderPage.getTotal())
+            .page(page)
+            .size(size)
+            .totalPages((int) Math.ceil((double) orderPage.getTotal() / size))
+            .build();
+    }
+
+    @Transactional
+    public void updateOrderStatus(Long orderId, String status) {
+        TradeOrder order = orderMapper.selectById(orderId);
+        if (order == null) {
+            throw new IllegalArgumentException("订单不存在");
+        }
+        order.setStatus(status);
+        order.setUpdatedAt(LocalDateTime.now());
+        orderMapper.updateById(order);
     }
 }

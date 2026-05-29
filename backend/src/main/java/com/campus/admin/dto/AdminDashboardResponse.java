@@ -2,6 +2,7 @@ package com.campus.admin.dto;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import lombok.Builder;
 import lombok.Data;
@@ -19,6 +20,7 @@ public class AdminDashboardResponse {
     private List<CategoryStat> categoryStats;
     private List<StatusStat> orderStatusStats;
     private List<StatusStat> productStatusStats;
+    private List<RecentActivity> recentActivities;
 
     @Data
     @Builder
@@ -43,5 +45,13 @@ public class AdminDashboardResponse {
     public static class StatusStat {
         private String status;
         private Long count;
+    }
+
+    @Data
+    @Builder
+    public static class RecentActivity {
+        private String type;
+        private String description;
+        private java.time.LocalDateTime timestamp;
     }
 }
