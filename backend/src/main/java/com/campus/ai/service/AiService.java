@@ -2,56 +2,62 @@ package com.campus.ai.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 
+/**
+ * AI 服务。
+ * 现阶段（阶段 C）：转发到 Python ai-service（FastAPI），由 Python 侧统一处理 LLM 调用。
+ * Python 服务不可用时降级为演示模式，保证主流程不阻断。
+ */
 @Service
 public class AiService {
+
+    private static final Logger logger = LoggerFactory.getLogger(AiService.class);
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
 
-    @Value("${app.deepseek.api-key:}")
-    private String apiKey;
+    @Value("${app.ai-service.base-url:http://127.0.0.1:8001}")
+    private String aiServiceBaseUrl;
 
-    @Value("${app.deepseek.base-url:https://api.deepseek.com}")
-    private String baseUrl;
+    @Value("${app.ai-service.timeout-seconds:30}")
+    private int timeoutSeconds;
 
     public AiService(RestClient.Builder restClientBuilder, ObjectMapper objectMapper) {
         this.restClient = restClientBuilder.build();
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 润色商品描述：转发到 Python ai-service 的 /api/ai/polish。
+     */
     public String polishDescription(String text) {
         if (!StringUtils.hasText(text)) {
             throw new IllegalArgumentException("描述不能为空");
         }
-        if (!StringUtils.hasText(apiKey)) {
-            return "【演示模式】未配置 app.deepseek.api-key。原文如下：\n" + text.trim();
-        }
-        Map<String, Object> body = Map.of(
-            "model", "deepseek-chat",
-            "messages", List.of(
-                Map.of("role", "system", "content", "你是校园二手交易平台的文案助手，请把用户提供的商品描述润色得更清晰、真诚、有吸引力，不要编造不存在的参数。"),
-                Map.of("role", "user", "content", "请润色以下商品描述：\n" + text.trim())
-            )
-        );
-        String raw = restClient.post()
-            .uri(baseUrl + "/v1/chat/completions")
-            .header("Authorization", "Bearer " + apiKey)
-            .header("Content-Type", "application/json")
-            .body(body)
-            .retrieve()
-            .body(String.class);
+
         try {
+            String raw = restClient.post()
+                .uri(aiServiceBaseUrl + "/api/ai/polish")
+                .header("Content-Type", "application/json")
+                .body(Map.of("text", text.trim()))
+                .retrieve()
+                .body(String.class);
             JsonNode root = objectMapper.readTree(raw);
-            return root.path("choices").path(0).path("message").path("content").asText(raw);
+            String polished = root.path("text").asText(null);
+            if (!StringUtils.hasText(polished)) {
+                throw new IllegalStateException("Python 服务返回空文本");
+            }
+            return polished;
         } catch (Exception ex) {
-            throw new IllegalStateException("解析 AI 响应失败", ex);
+            logger.warn("调用 Python ai-service 失败，降级演示模式: {}", ex.getMessage());
+            return "【演示模式】AI 服务暂不可用，原文如下：\n" + text.trim();
         }
     }
 }
