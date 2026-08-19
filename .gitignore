@@ -1,15 +1,74 @@
-# 依赖目录
-node_modules/
-
-# 环境变量
+# ========== 环境变量与密钥 ==========
 .env
 .env.local
+.env.*.local
 
-# 日志
+# ========== 日志 ==========
 logs/
 *.log
 
-# 编辑器
+# ========== 编辑器 / IDE ==========
 .idea/
 .vscode/
 *.swp
+*.iml
+*.ipr
+*.iws
+
+# ========== 操作系统 ==========
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ========== Java / Maven 后端 ==========
+backend/target/
+backend/BOOT-INF/
+backend/lib/
+backend/META-INF/
+backend/org/
+*.class
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+mvnw
+mvnw.cmd
+
+# ========== 前端 ==========
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+.vite/
+
+# ========== 运行时上传文件 ==========
+uploads/
+backend/uploads/
+
+# ========== Python AI 服务（为后续阶段预留）==========
+ai-service/__pycache__/
+ai-service/**/__pycache__/
+*.py[cod]
+*$py.class
+ai-service/.venv/
+ai-service/venv/
+ai-service/env/
+ai-service/.pytest_cache/
+ai-service/.mypy_cache/
+ai-service/*.egg-info/
+
+# ========== 向量库与本地数据（为后续阶段预留）==========
+ai-service/data/
+ai-service/chroma_db/
+*.sqlite
+*.db
+
+# 本地大模型权重（不进 git，太大）
+models/
+
+# ChromaDB 运行时数据（项目根目录）
+/data/
+
+# ========== 构建与打包 ==========
+*.tar
+*.gz
+*.zip
