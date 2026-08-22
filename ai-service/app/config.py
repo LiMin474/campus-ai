@@ -22,5 +22,12 @@ class Settings(BaseSettings):
 
     jwt_secret: str = ""
 
+    # ========== RAG 配置 ==========
+    # BGE 模型路径：留空则用脚本相对路径推算（项目根 / models / bge-small-zh-v1.5）
+    embedding_model_dir: str = ""
+    chroma_path: str = "data/chroma"
+    rag_collection_name: str = "products_bge"
+    rag_top_k: int = 3
+
 
 settings = Settings()
