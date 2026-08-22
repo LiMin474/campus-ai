@@ -16,7 +16,11 @@
       </el-form-item>
       <el-form-item>
         <el-button type="primary" native-type="submit" :loading="loading">登录</el-button>
-        <el-button @click="$router.push('/register')">去注册</el-button>
+        <el-button @click="$router.push('/register')">学号注册</el-button>
+        <el-button @click="$router.push('/email-register')">邮箱注册</el-button>
+      </el-form-item>
+      <el-form-item>
+        <el-link type="primary" @click="$router.push('/forgot-password')">忘记密码？</el-link>
       </el-form-item>
     </el-form>
   </el-card>

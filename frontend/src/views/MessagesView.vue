@@ -95,6 +95,8 @@ import { useAuthStore } from "../stores/auth";
 import SockJS from 'sockjs-client';
 import Stomp from 'stompjs';
 
+type StompSubscription = { id: string; unsubscribe: () => void };
+
 type Conv = {
   id: number;
   peerUserId: number;
@@ -127,8 +129,10 @@ const draft = ref("");
 const sending = ref(false);
 const scrollRef = ref<HTMLElement | null>(null);
 
-let stompClient: Stomp.Client | null = null;
+const stompClient = ref<Stomp.Client | null>(null);
 let pollList: ReturnType<typeof setInterval> | null = null;
+let messageSubscription: StompSubscription | null = null;
+let readSubscription: StompSubscription | null = null;
 
 const unreadTotal = computed(() => conversations.value.reduce((a, c) => a + (c.unreadCount || 0), 0));
 
@@ -202,16 +206,13 @@ async function select(id: number) {
 }
 
 function subscribeToMessages(conversationId: number) {
-  if (!stompClient || !stompClient.connected) return;
+  if (!stompClient.value || !stompClient.value.connected) return;
   
-  // 取消之前的订阅
   unsubscribeFromMessages();
   
-  // 订阅新的会话
-  const subscription = stompClient.subscribe(`/queue/chat/conversations/${conversationId}`, (message) => {
+  messageSubscription = stompClient.value.subscribe(`/queue/chat/conversations/${conversationId}`, (message) => {
     try {
       const msg: Msg = JSON.parse(message.body);
-      // 设置 mine 字段
       msg.mine = msg.senderId === auth.user?.id;
       messages.value.push(msg);
       nextTick(() => scrollBottom());
@@ -220,11 +221,9 @@ function subscribeToMessages(conversationId: number) {
     }
   });
   
-  // 订阅已读通知
-  stompClient.subscribe(`/queue/chat/conversations/${conversationId}/read`, (message) => {
+  readSubscription = stompClient.value.subscribe(`/queue/chat/conversations/${conversationId}/read`, (message) => {
     try {
       const data = JSON.parse(message.body);
-      // 处理已读通知
       loadList();
     } catch (error) {
       console.error('Failed to parse read notification:', error);
@@ -233,17 +232,24 @@ function subscribeToMessages(conversationId: number) {
 }
 
 function unsubscribeFromMessages() {
-  // 这里可以添加取消订阅的逻辑
+  if (messageSubscription) {
+    messageSubscription.unsubscribe();
+    messageSubscription = null;
+  }
+  if (readSubscription) {
+    readSubscription.unsubscribe();
+    readSubscription = null;
+  }
 }
 
 async function send() {
-  if (!activeId.value || !stompClient || !stompClient.connected) return;
+  if (!activeId.value || !stompClient.value || !stompClient.value.connected) return;
   const text = draft.value.trim();
   if (!text) return;
   sending.value = true;
   try {
-    // 使用 WebSocket 发送消息
-    stompClient.send(`/app/chat/conversations/${activeId.value}/messages`, {}, JSON.stringify({ content: text }));
+    const headers = auth.token ? { Authorization: `Bearer ${auth.token}` } : {};
+    stompClient.value.send(`/app/chat/conversations/${activeId.value}/messages`, headers, JSON.stringify({ content: text }));
     draft.value = "";
   } catch (e: any) {
     ElMessage.error(e?.message || "发送失败");
@@ -253,20 +259,24 @@ async function send() {
 }
 
 function connectWebSocket() {
-  const socket = new SockJS('http://localhost:8080/ws');
-  stompClient = Stomp.over(socket);
+  const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
+  const host = window.location.host;
+  const wsUrl = import.meta.env.DEV ? '/ws' : `${protocol}//${host}/ws`;
+  const socket = new SockJS(wsUrl);
+  stompClient.value = Stomp.over(socket);
   
-  stompClient.connect({}, () => {
+  const headers = auth.token ? { Authorization: `Bearer ${auth.token}` } : {};
+  console.log('WebSocket connecting with token:', auth.token ? 'present' : 'missing');
+  console.log('Headers:', headers);
+  console.log('WebSocket URL:', wsUrl);
+  stompClient.value.connect(headers, () => {
     console.log('WebSocket connected');
-    // 重新加载会话列表
     loadList();
-    // 如果有活跃会话，重新订阅
     if (activeId.value) {
       subscribeToMessages(activeId.value);
     }
   }, (error) => {
     console.error('WebSocket connection error:', error);
-    // 尝试重连
     setTimeout(connectWebSocket, 5000);
   });
 }
@@ -306,8 +316,8 @@ watch(activeId, (id) => {
 
 onBeforeUnmount(() => {
   if (pollList) clearInterval(pollList);
-  if (stompClient) {
-    stompClient.disconnect();
+  if (stompClient.value) {
+    stompClient.value.disconnect(() => {});
   }
 });
 </script>

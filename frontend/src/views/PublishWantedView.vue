@@ -136,13 +136,11 @@ async function polishDescription() {
   }
   polishing.value = true;
   try {
-    const { data } = await http.post<ApiResponse<{ polishedText: string }>>("/ai/polish", {
-      text: form.value.description.trim(),
-      type: "wanted",
-      title: form.value.title
+    const { data } = await http.post<ApiResponse<{ text: string }>>("/ai/polish", {
+      text: form.value.description.trim()
     });
     if (data.code === 200) {
-      form.value.description = data.data.polishedText;
+      form.value.description = data.data.text;
       ElMessage.success("润色成功");
     } else {
       ElMessage.error(data.message || "润色失败");

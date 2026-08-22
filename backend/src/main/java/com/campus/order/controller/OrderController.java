@@ -13,6 +13,7 @@ import com.campus.order.dto.OrderConfirmTokenResponse;
 import com.campus.order.dto.OrderCreateRequest;
 import com.campus.order.dto.OrderResponse;
 import com.campus.order.dto.ReviewCreateRequest;
+import com.campus.order.dto.ReviewResponse;
 import com.campus.order.service.OrderService;
 import com.campus.order.service.ReviewService;
 import jakarta.validation.Valid;
@@ -105,5 +106,23 @@ public class OrderController {
         Long userId = SecurityUtils.requireUserId();
         reviewService.create(userId, request);
         return ApiResponse.success();
+    }
+
+    @GetMapping("/reviews/received")
+    public ApiResponse<Page<ReviewResponse>> receivedReviews(
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "10") int size
+    ) {
+        Long userId = SecurityUtils.requireUserId();
+        return ApiResponse.success(reviewService.listReceivedReviews(userId, page, size));
+    }
+
+    @GetMapping("/reviews/given")
+    public ApiResponse<Page<ReviewResponse>> givenReviews(
+        @RequestParam(defaultValue = "1") int page,
+        @RequestParam(defaultValue = "10") int size
+    ) {
+        Long userId = SecurityUtils.requireUserId();
+        return ApiResponse.success(reviewService.listGivenReviews(userId, page, size));
     }
 }

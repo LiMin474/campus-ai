@@ -128,12 +128,12 @@ npm run dev
 
 **社区**
 
-- `GET /api/posts` — 帖子分页（`sort`: `latest` / `hot`）
+- `GET /api/posts` — 帖子分页（`keyword` 可选，搜标题/内容；`sort`: `latest` / `hot`）
 - `GET /api/posts/{id}` — 帖子详情
 - `POST /api/posts` — 发帖
 - `DELETE /api/posts/{id}` — 删帖（本人或管理员）
 - `GET /api/posts/{id}/comments` — 评论树
-- `POST /api/posts/comments` — 评论
+- `POST /api/posts/comments` — 评论（`parentId` 可选，传则为回复某条评论）
 - `POST /api/posts/{id}/like` — 帖子点赞/取消
 
 **举报与 AI**

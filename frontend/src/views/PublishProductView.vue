@@ -159,7 +159,7 @@ async function polishDescription() {
   }
   polishing.value = true;
   try {
-    const { data } = await http.post<ApiResponse<{ text: string }>>("/api/ai/polish", {
+    const { data } = await http.post<ApiResponse<{ text: string }>>("/ai/polish", {
       text: form.description
     });
     if (data.code === 200) {

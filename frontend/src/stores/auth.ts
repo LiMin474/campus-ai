@@ -5,6 +5,7 @@ type UserBrief = {
   id: number;
   nickname: string;
   role: string;
+  avatarUrl?: string;
 };
 
 export const useAuthStore = defineStore("auth", {
@@ -40,9 +41,16 @@ export const useAuthStore = defineStore("auth", {
     async fetchUser() {
       if (!this.token) return;
       try {
-        const { data } = await http.get<ApiResponse<{ id: number; nickname: string; role: string }>>("/user/me");
+        const { data } = await http.get<
+          ApiResponse<{ id: number; nickname: string; avatarUrl?: string }>
+        >("/user/me");
         if (data.code === 200) {
-          this.setUser(data.data);
+          this.setUser({
+            id: data.data.id,
+            nickname: data.data.nickname,
+            avatarUrl: data.data.avatarUrl || "",
+            role: this.user?.role || "STUDENT"
+          });
         }
       } catch (e) {
         console.error("Failed to fetch user info", e);

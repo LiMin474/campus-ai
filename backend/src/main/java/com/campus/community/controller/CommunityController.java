@@ -37,11 +37,12 @@ public class CommunityController {
 
     @GetMapping
     public ApiResponse<Page<CommunityPost>> page(
+        @RequestParam(required = false) String keyword,
         @RequestParam(defaultValue = "latest") String sort,
         @RequestParam(defaultValue = "1") int page,
         @RequestParam(defaultValue = "10") int size
     ) {
-        return ApiResponse.success(communityService.page(sort, page, size));
+        return ApiResponse.success(communityService.page(keyword, sort, page, size));
     }
 
     @GetMapping("/{id}")

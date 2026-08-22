@@ -11,6 +11,7 @@ public class CommentNodeResponse {
     private Long postId;
     private Long userId;
     private String userNickname;
+    private String userAvatarUrl;
     private Long parentId;
     private String content;
     private LocalDateTime createdAt;

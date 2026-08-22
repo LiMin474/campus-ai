@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" 
+    "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+    
+<mapper namespace="com.campus.order.mapper.ReviewMapper">
+
+    <resultMap id="ReviewResponseMap" type="com.campus.order.dto.ReviewResponse">
+        <id property="id" column="id"/>
+        <result property="orderId" column="order_id"/>
+        <result property="fromUserId" column="from_user_id"/>
+        <result property="toUserId" column="to_user_id"/>
+        <result property="communicationScore" column="communication_score"/>
+        <result property="matchScore" column="match_score"/>
+        <result property="speedScore" column="speed_score"/>
+        <result property="content" column="content"/>
+        <result property="createdAt" column="created_at"/>
+        <result property="fromUserNickname" column="from_user_nickname"/>
+        <result property="toUserNickname" column="to_user_nickname"/>
+        <result property="orderProductTitle" column="order_product_title"/>
+    </resultMap>
+
+    <select id="selectReceivedReviews" resultMap="ReviewResponseMap">
+        SELECT r.id, r.order_id, r.from_user_id, r.to_user_id, 
+               r.communication_score, r.match_score, r.speed_score, r.content, r.created_at, 
+               u1.nickname AS from_user_nickname, 
+               u2.nickname AS to_user_nickname, 
+               p.title AS order_product_title 
+        FROM review r 
+        LEFT JOIN user u1 ON r.from_user_id = u1.id 
+        LEFT JOIN user u2 ON r.to_user_id = u2.id 
+        LEFT JOIN trade_order o ON r.order_id = o.id 
+        LEFT JOIN product p ON o.product_id = p.id 
+        WHERE r.to_user_id = #{userId} 
+        ORDER BY r.created_at DESC
+    </select>
+
+    <select id="selectGivenReviews" resultMap="ReviewResponseMap">
+        SELECT r.id, r.order_id, r.from_user_id, r.to_user_id, 
+               r.communication_score, r.match_score, r.speed_score, r.content, r.created_at, 
+               u1.nickname AS from_user_nickname, 
+               u2.nickname AS to_user_nickname, 
+               p.title AS order_product_title 
+        FROM review r 
+        LEFT JOIN user u1 ON r.from_user_id = u1.id 
+        LEFT JOIN user u2 ON r.to_user_id = u2.id 
+        LEFT JOIN trade_order o ON r.order_id = o.id 
+        LEFT JOIN product p ON o.product_id = p.id 
+        WHERE r.from_user_id = #{userId} 
+        ORDER BY r.created_at DESC
+    </select>
+
+</mapper>

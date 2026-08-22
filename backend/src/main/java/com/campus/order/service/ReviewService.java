@@ -1,11 +1,15 @@
 package com.campus.order.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.order.dto.ReviewCreateRequest;
+import com.campus.order.dto.ReviewResponse;
 import com.campus.order.entity.Review;
 import com.campus.order.entity.TradeOrder;
 import com.campus.order.mapper.ReviewMapper;
 import com.campus.order.mapper.TradeOrderMapper;
+import com.campus.product.entity.ProductImage;
+import com.campus.product.mapper.ProductImageMapper;
 import com.campus.user.entity.User;
 import com.campus.user.mapper.UserMapper;
 import java.time.LocalDateTime;
@@ -19,11 +23,14 @@ public class ReviewService {
     private final ReviewMapper reviewMapper;
     private final TradeOrderMapper tradeOrderMapper;
     private final UserMapper userMapper;
+    private final ProductImageMapper productImageMapper;
 
-    public ReviewService(ReviewMapper reviewMapper, TradeOrderMapper tradeOrderMapper, UserMapper userMapper) {
+    public ReviewService(ReviewMapper reviewMapper, TradeOrderMapper tradeOrderMapper,
+                        UserMapper userMapper, ProductImageMapper productImageMapper) {
         this.reviewMapper = reviewMapper;
         this.tradeOrderMapper = tradeOrderMapper;
         this.userMapper = userMapper;
+        this.productImageMapper = productImageMapper;
     }
 
     @Transactional
@@ -77,5 +84,107 @@ public class ReviewService {
         toUser.setCreditScore(score);
         toUser.setUpdatedAt(LocalDateTime.now());
         userMapper.updateById(toUser);
+    }
+
+    public Page<ReviewResponse> listReceivedReviews(Long userId, int page, int size) {
+        try {
+            Page<Review> pageParam = new Page<>(page, size);
+            LambdaQueryWrapper<Review> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(Review::getToUserId, userId).orderByDesc(Review::getCreatedAt);
+
+            Page<Review> reviewPage = reviewMapper.selectPage(pageParam, queryWrapper);
+
+            Page<ReviewResponse> result = new Page<>();
+            result.setCurrent(reviewPage.getCurrent());
+            result.setSize(reviewPage.getSize());
+            result.setTotal(reviewPage.getTotal());
+
+            java.util.List<ReviewResponse> records = new java.util.ArrayList<>();
+            for (Review review : reviewPage.getRecords()) {
+                ReviewResponse response = convertToResponse(review);
+                records.add(response);
+            }
+            result.setRecords(records);
+            return result;
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException("查询收到的评价失败: " + e.getClass().getName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    public Page<ReviewResponse> listGivenReviews(Long userId, int page, int size) {
+        try {
+            Page<Review> pageParam = new Page<>(page, size);
+            LambdaQueryWrapper<Review> queryWrapper = new LambdaQueryWrapper<>();
+            queryWrapper.eq(Review::getFromUserId, userId).orderByDesc(Review::getCreatedAt);
+
+            Page<Review> reviewPage = reviewMapper.selectPage(pageParam, queryWrapper);
+
+            Page<ReviewResponse> result = new Page<>();
+            result.setCurrent(reviewPage.getCurrent());
+            result.setSize(reviewPage.getSize());
+            result.setTotal(reviewPage.getTotal());
+
+            java.util.List<ReviewResponse> records = new java.util.ArrayList<>();
+            for (Review review : reviewPage.getRecords()) {
+                ReviewResponse response = convertToResponse(review);
+                records.add(response);
+            }
+            result.setRecords(records);
+            return result;
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new RuntimeException("查询发出的评价失败: " + e.getClass().getName() + ": " + e.getMessage(), e);
+        }
+    }
+
+    private ReviewResponse convertToResponse(Review review) {
+        ReviewResponse response = ReviewResponse.builder()
+            .id(review.getId())
+            .orderId(review.getOrderId())
+            .fromUserId(review.getFromUserId())
+            .toUserId(review.getToUserId())
+            .communicationScore(review.getCommunicationScore())
+            .matchScore(review.getMatchScore())
+            .speedScore(review.getSpeedScore())
+            .content(review.getContent())
+            .createdAt(review.getCreatedAt())
+            .build();
+
+        User fromUser = userMapper.selectById(review.getFromUserId());
+        if (fromUser != null) {
+            response.setFromUserNickname(fromUser.getNickname());
+        }
+
+        User toUser = userMapper.selectById(review.getToUserId());
+        if (toUser != null) {
+            response.setToUserNickname(toUser.getNickname());
+        }
+
+        TradeOrder order = tradeOrderMapper.selectById(review.getOrderId());
+        if (order != null) {
+            response.setOrderProductTitle("商品订单#" + order.getId());
+
+            ProductImage image = productImageMapper.selectOne(
+                new LambdaQueryWrapper<ProductImage>()
+                    .eq(ProductImage::getProductId, order.getProductId())
+                    .orderByAsc(ProductImage::getSortOrder)
+                    .last("LIMIT 1")
+            );
+            if (image != null) {
+                response.setProductImageUrl(image.getImageUrl());
+            }
+        }
+
+        if (review.getCommunicationScore() != null
+            && review.getMatchScore() != null
+            && review.getSpeedScore() != null) {
+            double avg = (review.getCommunicationScore()
+                + review.getMatchScore()
+                + review.getSpeedScore()) / 3.0;
+            response.setAvgScore(avg);
+        }
+
+        return response;
     }
 }

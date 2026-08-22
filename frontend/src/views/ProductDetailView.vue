@@ -32,7 +32,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { http, type ApiResponse } from "../api/http";
 import { useAuthStore } from "../stores/auth";
 
@@ -80,7 +80,17 @@ async function contactSeller() {
 }
 
 async function buy() {
+  if (!detail.value) return;
   try {
+    await ElMessageBox.confirm(
+      `确定要购买 "${detail.value.title}" 吗？价格为 ¥${detail.value.price}`,
+      "确认购买",
+      {
+        confirmButtonText: "确定购买",
+        cancelButtonText: "取消",
+        type: "warning",
+      }
+    );
     const { data } = await http.post<ApiResponse<number>>("/orders", { productId: Number(route.params.id) });
     if (data.code !== 200) {
       ElMessage.error(data.message || "下单失败");
@@ -88,7 +98,9 @@ async function buy() {
     }
     ElMessage.success(`订单已创建，ID：${data.data}`);
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || "下单失败");
+    if (e !== "cancel") {
+      ElMessage.error(e?.response?.data?.message || "下单失败");
+    }
   }
 }
 

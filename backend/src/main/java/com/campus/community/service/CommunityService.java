@@ -18,8 +18,11 @@ import com.campus.community.mapper.LikeRecordMapper;
 import com.campus.user.entity.User;
 import com.campus.user.mapper.UserMapper;
 import java.time.LocalDateTime;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -82,8 +85,12 @@ public class CommunityService {
         return post.getId();
     }
 
-    public Page<CommunityPost> page(String sort, int page, int size) {
+    public Page<CommunityPost> page(String keyword, String sort, int page, int size) {
         LambdaQueryWrapper<CommunityPost> wrapper = new LambdaQueryWrapper<>();
+        if (StringUtils.hasText(keyword)) {
+            String kw = keyword.trim();
+            wrapper.and(w -> w.like(CommunityPost::getTitle, kw).or().like(CommunityPost::getContent, kw));
+        }
         if ("hot".equalsIgnoreCase(sort)) {
             wrapper.orderByDesc(CommunityPost::getLikeCount).orderByDesc(CommunityPost::getCommentCount);
         } else {
@@ -107,6 +114,7 @@ public class CommunityService {
             .content(post.getContent())
             .userId(post.getUserId())
             .userNickname(author != null ? author.getNickname() : null)
+            .userAvatarUrl(author != null ? author.getAvatarUrl() : null)
             .likeCount(post.getLikeCount())
             .commentCount(post.getCommentCount())
             .createdAt(post.getCreatedAt())
@@ -168,6 +176,7 @@ public class CommunityService {
             node.setUserId(c.getUserId());
             User u = userMap.get(c.getUserId());
             node.setUserNickname(u != null ? u.getNickname() : null);
+            node.setUserAvatarUrl(u != null ? u.getAvatarUrl() : null);
             node.setParentId(c.getParentId());
             node.setContent(c.getContent());
             node.setCreatedAt(c.getCreatedAt());
@@ -228,12 +237,36 @@ public class CommunityService {
             throw new IllegalArgumentException("无权删除");
         }
         Long postId = comment.getPostId();
-        commentMapper.deleteById(commentId);
+        List<CommunityComment> allComments = commentMapper.selectList(new LambdaQueryWrapper<CommunityComment>()
+            .eq(CommunityComment::getPostId, postId));
+        Set<Long> toDelete = collectDescendantIds(commentId, allComments);
+        toDelete.add(commentId);
+        commentMapper.delete(new LambdaQueryWrapper<CommunityComment>().in(CommunityComment::getId, toDelete));
+
         CommunityPost post = postMapper.selectById(postId);
         if (post != null) {
-            post.setCommentCount(Math.max(0, post.getCommentCount() - 1));
+            post.setCommentCount(Math.max(0, post.getCommentCount() - toDelete.size()));
             post.setUpdatedAt(LocalDateTime.now());
             postMapper.updateById(post);
         }
+    }
+
+    private Set<Long> collectDescendantIds(Long rootId, List<CommunityComment> allComments) {
+        Map<Long, List<Long>> childrenMap = new HashMap<>();
+        for (CommunityComment c : allComments) {
+            if (c.getParentId() != null) {
+                childrenMap.computeIfAbsent(c.getParentId(), k -> new ArrayList<>()).add(c.getId());
+            }
+        }
+        Set<Long> result = new HashSet<>();
+        Deque<Long> stack = new ArrayDeque<>(childrenMap.getOrDefault(rootId, List.of()));
+        while (!stack.isEmpty()) {
+            Long id = stack.pop();
+            result.add(id);
+            for (Long childId : childrenMap.getOrDefault(id, List.of())) {
+                stack.push(childId);
+            }
+        }
+        return result;
     }
 }
