@@ -23,6 +23,7 @@ const router = createRouter({
     { path: "/wanted", name: "wanted", component: () => import("../views/WantedListView.vue") },
     { path: "/wanted/:id", name: "wanted-detail", component: () => import("../views/WantedDetailView.vue") },
     { path: "/posts", name: "posts", component: () => import("../views/PostsView.vue") },
+    { path: "/ai-chat", name: "ai-chat", component: () => import("../views/AiChatView.vue") },
     // 管理端路由
     { path: "/admin/dashboard", name: "admin-dashboard", component: () => import("../views/admin/AdminDashboardView.vue"), meta: { auth: true, admin: true } },
     { path: "/admin/users", name: "admin-users", component: () => import("../views/admin/AdminUsersView.vue"), meta: { auth: true, admin: true } },

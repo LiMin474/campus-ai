@@ -5,8 +5,10 @@
 - POST /api/ai/rag/search 纯检索
 - POST /api/ai/rag/chat   RAG 对话（检索 + 生成）
 """
-from typing import List
+from typing import List, AsyncGenerator
+import json
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.rag import RagService
@@ -22,6 +24,9 @@ router = APIRouter(prefix="/api/ai/rag", tags=["ai-rag"])
 class ProductItem(BaseModel): # id编号 + 商品文本描述
     id: str | int
     text: str
+    # 阶段二：结构化字段（可选，用于 ChromaDB metadata 存价格/成色，供 search_products 过滤）
+    price: float | None = None
+    condition: str | None = None
 
 
 class IndexRequest(BaseModel): # /index 接口的请求体，前端一次性传一批商品列表过来灌库
@@ -37,10 +42,13 @@ class SearchRequest(BaseModel): # /search 纯检索接口请求体：用户搜�
     top_k: int | None = None
 
 
-class SearchItem(BaseModel): # 单条检索结果：商品 id，商品文本，向量相似度距离。
+class SearchItem(BaseModel):  # 单条检索结果：商品 id，商品文本，向量相似度距离。
     id: str
     text: str
     distance: float
+    # 阶段二：价格/成色（来自 ChromaDB metadata，可能缺失）
+    price: float | None = None
+    condition: str | None = None
 
 
 class SearchResponse(BaseModel): # 返回列表
@@ -74,7 +82,15 @@ async def get_rag() -> RagService:
 @router.post("/index", response_model=IndexResponse)
 async def index(req: IndexRequest, rag: RagService = Depends(get_rag)) -> IndexResponse:
     try:
-        products = [{"id": p.id, "text": p.text} for p in req.products]
+        products = [
+            {
+                "id": p.id,
+                "text": p.text,
+                "price": p.price,
+                "condition": p.condition,
+            }
+            for p in req.products
+        ]
         count = rag.index_products(products)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -104,4 +120,34 @@ async def chat(req: ChatRequest, rag: RagService = Depends(get_rag)) -> ChatResp
     return ChatResponse(
         answer=result["answer"],
         sources=[SearchItem(**s) for s in result["sources"]],
+    )
+
+
+@router.post("/chat/stream")
+async def chat_stream(req: ChatRequest, rag: RagService = Depends(get_rag)) -> StreamingResponse:
+    """流式版 /chat：SSE 事件流，每行一个 JSON 事件。
+
+    事件：
+      {"type":"meta","sources":[...],"query":"..."}   先发元信息（含检索来源）
+      {"type":"delta","text":"..."}                    增量文本
+      {"type":"done"}                                   结束
+      {"type":"error","message":"..."}                  异常（代替 done）
+    """
+    async def event_gen() -> AsyncGenerator[str, None]:
+        try:
+            async for ev in rag.chat_stream(req.query, top_k=req.top_k):
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        except ValueError as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': f'AI 服务异常: {e}'}, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # 防止 nginx 缓冲 SSE
+            "Connection": "keep-alive",
+        },
     )

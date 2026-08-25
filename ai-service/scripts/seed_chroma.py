@@ -25,7 +25,7 @@ MYSQL_CMD = [
     "--default-character-set=utf8",
     "campus_trade",
     "-e",
-    "SELECT id, title, description FROM product WHERE status = 'ON_SHELF' ORDER BY id",
+    "SELECT id, title, description, price, condition_label FROM product WHERE status = 'ON_SHELF' ORDER BY id",
     "--batch",   # TSV 输出, 列名一行, 数据每行一条
     "--raw",      # 不转义特殊字符
 ]
@@ -51,16 +51,25 @@ def fetch_products():
     if len(lines) < 2:
         return []
 
-    # 第一行是列名(id\ttitle\tdescription), 跳过
+    # 第一行是列名(id\ttitle\tdescription\tprice\tcondition_label), 跳过
     products = []
     for line in lines[1:]:
         parts = line.split("\t")
-        if len(parts) < 3:
+        if len(parts) < 5:
             continue
-        pid, title, desc = parts[0], parts[1], parts[2]
+        pid, title, desc, price, condition = parts[0], parts[1], parts[2], parts[3], parts[4]
         # text = 标题 + 描述, 给 RAG 检索用
         text = f"{title} {desc}".strip()
-        products.append({"id": pid, "text": text})
+        # 阶段二：price/condition 传给 /index, Python 存进 ChromaDB metadata 供过滤
+        item: dict = {"id": pid, "text": text}
+        try:
+            if price:
+                item["price"] = float(price)
+        except ValueError:
+            pass
+        if condition:
+            item["condition"] = condition
+        products.append(item)
     return products
 
 

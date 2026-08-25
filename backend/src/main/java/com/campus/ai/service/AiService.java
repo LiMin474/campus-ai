@@ -139,6 +139,68 @@ public class AiService {
         }
     }
 
+    /**
+     * RAG 流式对话：转发 Python 的 SSE 流，逐块写入下游输出流（打字机效果）。
+     * 异常时往输出流写入一个 error 事件并结束。
+     *
+     * @param query 用户问题
+     * @param out   下游输出流（HttpServletResponse.getOutputStream()）
+     */
+    public void ragChatStream(String query, java.io.OutputStream out) {
+        if (!StringUtils.hasText(query)) {
+            throw new IllegalArgumentException("查询不能为空");
+        }
+        HttpURLConnection conn = null;
+        try {
+            String jsonBody = objectMapper.writeValueAsString(Map.of("query", query.trim()));
+            byte[] bodyBytes = jsonBody.getBytes(StandardCharsets.UTF_8);
+
+            conn = (HttpURLConnection) URI.create(aiServiceBaseUrl + "/api/ai/rag/chat/stream").toURL().openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(10_000);
+            conn.setReadTimeout(120_000); // 流式生成可能较长，放宽读超时
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
+            conn.setRequestProperty("Accept", "text/event-stream");
+            conn.setRequestProperty("Content-Length", String.valueOf(bodyBytes.length));
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(bodyBytes);
+                os.flush();
+            }
+
+            int code = conn.getResponseCode();
+            try (java.io.InputStream is = (code >= 200 && code < 300) ? conn.getInputStream() : conn.getErrorStream()) {
+                if (is == null) {
+                    writeStreamEvent(out, "{\"type\":\"error\",\"message\":\"Python 服务无响应流\"}");
+                    return;
+                }
+                byte[] buf = new byte[4096];
+                int n;
+                while ((n = is.read(buf)) != -1) {
+                    out.write(buf, 0, n);
+                    out.flush();
+                }
+            }
+        } catch (Exception ex) {
+            logger.warn("调用 Python ai-service 流式对话失败: {}", ex.getMessage());
+            try {
+                writeStreamEvent(out, "{\"type\":\"error\",\"message\":\"AI 服务暂不可用\"}");
+            } catch (Exception ignored) {
+                // 下游已断开则忽略
+            }
+        } finally {
+            if (conn != null) {
+                conn.disconnect();
+            }
+        }
+    }
+
+    /** 写一条 SSE 事件到下游。 */
+    private void writeStreamEvent(java.io.OutputStream out, String dataJson) throws java.io.IOException {
+        out.write(("data: " + dataJson + "\n\n").getBytes(StandardCharsets.UTF_8));
+        out.flush();
+    }
+
     // ------------------------------------------------------------------
     // 通用 HTTP 转发工具
     // ------------------------------------------------------------------

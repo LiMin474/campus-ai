@@ -115,9 +115,24 @@
     </el-header>
     <el-main class="main-wrapper">
       <div class="main">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <!-- keep-alive 只缓存 AI 助手页：跳详情返回时聊天记录不丢失 -->
+          <keep-alive :include="['AiChatView']">
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
       </div>
     </el-main>
+
+    <!-- AI 助手浮动球：右下角悬浮，点击进入对话页 -->
+    <div
+      v-if="route.path !== '/ai-chat'"
+      class="ai-fab"
+      title="AI 购物助手"
+      @click="router.push('/ai-chat')"
+    >
+      <el-icon :size="26"><MagicStick /></el-icon>
+    </div>
   </el-container>
 </template>
 
@@ -125,7 +140,7 @@
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth";
-import { ArrowDown, Search, ChatDotRound, Plus } from "@element-plus/icons-vue";
+import { ArrowDown, Search, ChatDotRound, Plus, MagicStick } from "@element-plus/icons-vue";
 
 const auth = useAuthStore();
 const router = useRouter();
@@ -338,5 +353,28 @@ body,
   width: 100%;
   box-sizing: border-box;
   padding: 24px 16px 48px;
+}
+
+/* AI 助手浮动球：右下角悬浮 */
+.ai-fab {
+  position: fixed;
+  right: 28px;
+  bottom: 28px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0f9d58, #0bb767);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(15, 157, 88, 0.35);
+  z-index: 2000;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.ai-fab:hover {
+  transform: scale(1.08);
+  box-shadow: 0 8px 24px rgba(15, 157, 88, 0.5);
 }
 </style>
