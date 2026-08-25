@@ -85,6 +85,7 @@ interface SourceItem {
   id: number;
   title: string;
   price?: number;
+  condition?: string;
   coverImage?: string;
   text: string;
   distance?: number;
@@ -241,6 +242,7 @@ async function enrichSources(sources: SourceItem[]) {
         if (d) {
           s.title = d.title || s.title;
           s.price = d.price != null ? Number(d.price) : undefined;
+          s.condition = d.conditionLabel || s.condition;
           s.coverImage = d.imageUrls?.length ? d.imageUrls[0] : undefined;
         }
       } catch {
@@ -304,6 +306,8 @@ async function send() {
           (s.text || "").slice(0, 22) + ((s.text || "").length > 22 ? "..." : ""),
         text: s.text || "",
         distance: s.distance,
+        price: s.price != null ? Number(s.price) : undefined,
+        condition: s.condition || undefined,
       }));
       patchAsst({ sources });
       // 补拉完成后整体替换 sources 引用 → 强制触发 Vue 视图更新
@@ -357,7 +361,33 @@ async function send() {
         "Content-Type": "application/json",
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ query: text }),
+      body: JSON.stringify({
+        query: text,         //当前 用户提问内容
+        // 多轮对话：把之前的对话历史发给后端，让 AI 有记忆
+        // 排除刚 push 进去的用户消息 + 空 assistant 占位（最后两条）
+        history: messages.value
+          .slice(0, -2)     //去掉最后两条 此轮为还没有完成的最新一轮
+          .filter((m) => m.content.trim()) //过滤空消息
+          .map((m) => ({
+            role: m.role,
+            content: m.content,
+            // 工具结果记忆：assistant 消息附带上轮检索到的商品列表
+            // 让 LLM 能精确回答"第一个多少钱""那个成色怎样"等指代
+            // 注意：只发结构化字段，不发封面图 URL（LLM 看不了图，白占 token）
+            ...(m.role === "assistant" && m.sources?.length
+              ? {
+                  sources: m.sources.map((s) => ({
+                    id: s.id,
+                    title: s.title,
+                    price: s.price ?? null,
+                    condition: s.condition ?? null,
+                    text: s.text ?? "",
+                  })),
+                }
+              : {}),
+          }))
+          .slice(-10), // 最多发 10 条（5 轮），防 Token 爆   //只取最后10条
+      }),
     });
     if (!resp.ok || !resp.body) {
       throw new Error(`HTTP ${resp.status}`);

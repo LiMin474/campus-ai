@@ -59,19 +59,21 @@ public class AiController {
      * 响应体不是统一 ApiResponse，而是 text/event-stream 原始流。
      */
     @PostMapping("/rag/chat/stream")
-    public void ragChatStream(@RequestBody Map<String, String> body, jakarta.servlet.http.HttpServletResponse response)
+    public void ragChatStream(@RequestBody Map<String, Object> body, jakarta.servlet.http.HttpServletResponse response)
             throws java.io.IOException {
         // 1. 权限校验 必须登录
         SecurityUtils.requireUserId();
-        // 2. 拿到前端提问
-        String query = body.get("query");
+        // 2. 拿到前端提问 + 对话历史（多轮对话）
+        String query = (String) body.get("query");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> history = (List<Map<String, Object>>) body.get("history");
         // 3. 设置 SSE 响应头
         response.setContentType("text/event-stream; charset=UTF-8");
         response.setCharacterEncoding("UTF-8");
         response.setHeader("Cache-Control", "no-cache");
         response.setHeader("X-Accel-Buffering", "no");
         // 4. 转发 Python 流式响应，逐块写回前端
-        aiService.ragChatStream(query, response.getOutputStream());
+        aiService.ragChatStream(query, history, response.getOutputStream());
         response.getOutputStream().flush();
     }
 

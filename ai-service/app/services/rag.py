@@ -166,6 +166,37 @@ few-shot 参数示例（请遵循以上规则举一反三）
   正确参数：{"query": "考研资料", "category_hint": "书本", "min_condition": "九成新"}
 
 ====================
+多轮对话规则（当对话历史中已有上下文时）
+====================
+
+当对话历史中已有之前的问答时，你需要结合上下文理解用户当前意图：
+
+  1) 【延续搜索】用户说"有更便宜的吗""再便宜点""换个颜色"等延续词
+     → query 沿用上一轮的物品关键词，调整 sort_by 或价格约束
+     → 例：上一轮"我要平板，3000以内" → 本轮"有更便宜的吗"
+       正确参数：{"query": "平板", "max_price": 3000, "sort_by": "price_asc"}
+       错误做法：{"query": "更便宜"} ← query 不能写成"更便宜"，向量检索会乱
+
+  2) 【直接回答】用户问"那个多少钱""第一个多少钱""它有保修吗"
+     → 如果用户问的商品在上一轮工具结果中已返回，不要调工具，直接从上一轮结果里找价格回答
+     → 例：上一轮推荐了 iPad Air 2800 元 → 本轮"那个多少钱"
+       正确行为：不调工具，直接回答"上一轮推荐的 iPad Air 价格为 2800 元"
+
+  3) 【切换需求】用户说"那有没有耳机""换个品类看看"
+     → 这是新需求，正常调工具，query 用新的关键词
+
+示例 9（多轮 · 延续搜索）：
+  上一轮用户：「我要个平板，3000以内」→ 你推荐了 iPad Air 2800
+  本轮用户：「有更便宜的吗」
+  正确参数：{"query": "平板", "max_price": 2800, "sort_by": "price_asc"}
+  说明：query 沿用"平板"，max_price 从上一轮推荐价格下探，sort_by 改成价格升序
+
+示例 10（多轮 · 直接回答，不调工具）：
+  上一轮用户：「推荐个耳机」→ 你推荐了 AirPods Pro 2 900元
+  本轮用户：「那个多少钱」
+  正确行为：不调用 search_products，直接回答："上一轮推荐的 AirPods Pro 2 价格为 900 元，九成新。"
+
+====================
 最终回答输出格式（必须严格按 4 步结构输出，不得跳步，不得用其他结构）
 ====================
 
@@ -251,6 +282,43 @@ class RagService:
             metadatas=metadatas,
         )
         return len(ids)
+
+    def upsert_products(self, products: List[Dict[str, Any]]) -> int:
+        """增量灌库：按 id 覆盖写入，不删其它商品（商品发布/编辑时调用）"""
+        if not products:
+            return 0
+        ids = [str(p["id"]) for p in products]
+        documents = [p["text"] for p in products]
+        embeddings = self.embedding.encode(documents)
+        metadatas = [
+            {
+                k: v
+                for k, v in {
+                    "price": p.get("price"),
+                    "condition": p.get("condition"),
+                }.items()
+                if v is not None
+            }
+            for p in products
+        ]
+        self.collection.upsert(
+            ids=ids,
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+        return len(ids)
+
+    def delete_product(self, product_id: str) -> int:
+        """按商品 id 从向量库删除（商品下架/删除时调用）"""
+        try:
+            existing = self.collection.get(ids=[product_id]).get("ids", [])
+        except Exception:
+            existing = []
+        if not existing:
+            return 0
+        self.collection.delete(ids=existing)
+        return len(existing)
 
     # ------------------------------------------------------------------
     # search: 纯检索（带 metadata）
@@ -582,7 +650,7 @@ class RagService:
     #     {"type": "done"}                                     结束
     #   与 chat() 的区别：第二轮用 chat_complete_stream 增量 yield。
     # ------------------------------------------------------------------
-    async def chat_stream(self, query: str, top_k: int | None = None):
+    async def chat_stream(self, query: str, history: list[dict] | None = None, top_k: int | None = None):
         if not query or not query.strip():
             raise ValueError("查询不能为空")
 
@@ -591,8 +659,42 @@ class RagService:
         # 1) 第一轮：Function Calling 决策（必须等完整响应）
         messages = [
             {"role": "system", "content": AGENT_SYSTEM_PROMPT},
-            {"role": "user", "content": user_query_text},
         ]
+        # 多轮对话：把历史消息插入 system 和当前 query 之间
+        # 让 LLM 知道之前聊了什么，能理解"再便宜点""那个"等指代
+        if history:
+            for h in history:
+                role = h.get("role", "user")
+                content = h.get("content", "")
+                if not content.strip():
+                    continue
+                # 工具结果记忆：assistant 消息若带上轮检索的商品列表（sources），
+                # 格式化为文本附在 content 后，让 LLM 能精确回答
+                # "第一个多少钱""那个成色怎样"等指代问题
+                sources = h.get("sources")
+                if role == "assistant" and isinstance(sources, list) and sources:
+                    rows = []
+                    for i, s in enumerate(sources, 1):
+                        title = s.get("title") or s.get("text") or ""
+                        price = s.get("price")
+                        cond = s.get("condition")
+                        desc = s.get("text") or ""
+                        # 描述文本可能较长（含整条向量化文本），截断到 80 字防 token 膨胀
+                        if len(desc) > 80:
+                            desc = desc[:80] + "…"
+                        rows.append(
+                            f"第{i}个：id={s.get('id')}, 标题={title}, "
+                            f"价格={price if price is not None else '未知'}元, "
+                            f"成色={cond if cond else '未知'}, "
+                            f"描述={desc}"
+                        )
+                    content = (
+                        content
+                        + "\n\n【上一轮工具返回的商品列表（按顺序编号）】\n"
+                        + "\n".join(rows)
+                    )
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": user_query_text})
         first = await self.llm.chat_complete(messages, tools=[self.SEARCH_PRODUCTS_TOOL])
 
         # 2) 无 tool_calls → 直接返回文本（澄清/闲聊），按节奏分片 yield 实现打字机

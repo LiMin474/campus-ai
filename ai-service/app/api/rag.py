@@ -59,6 +59,8 @@ class SearchResponse(BaseModel): # 返回列表
 class ChatRequest(BaseModel):  # /chat 问答接口请求，用户问题。
     query: str
     top_k: int | None = None
+    # 多轮对话：之前的对话历史，每项 {"role": "user"/"assistant", "content": "..."}
+    history: list[dict] = []
 
 
 class ChatResponse(BaseModel):  # RAG 问答返回：大模型生成的回答 + 检索出来的商品来源列表。
@@ -95,6 +97,35 @@ async def index(req: IndexRequest, rag: RagService = Depends(get_rag)) -> IndexR
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return IndexResponse(indexed=count)
+
+
+@router.post("/index/incremental", response_model=IndexResponse)
+async def index_incremental(req: IndexRequest, rag: RagService = Depends(get_rag)) -> IndexResponse:
+    """增量灌库：按 id 覆盖写入，不删其它商品（商品发布/编辑时调用）"""
+    try:
+        products = [
+            {
+                "id": p.id,
+                "text": p.text,
+                "price": p.price,
+                "condition": p.condition,
+            }
+            for p in req.products
+        ]
+        count = rag.upsert_products(products)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return IndexResponse(indexed=count)
+
+
+@router.delete("/index/{product_id}", response_model=IndexResponse)
+async def index_delete(product_id: str | int, rag: RagService = Depends(get_rag)) -> IndexResponse:
+    """按商品 id 从向量库删除（商品下架/删除时调用）"""
+    try:
+        deleted = rag.delete_product(str(product_id))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return IndexResponse(indexed=deleted)
 
 
 @router.post("/search", response_model=SearchResponse)
@@ -135,7 +166,7 @@ async def chat_stream(req: ChatRequest, rag: RagService = Depends(get_rag)) -> S
     """
     async def event_gen() -> AsyncGenerator[str, None]:
         try:
-            async for ev in rag.chat_stream(req.query, top_k=req.top_k):
+            async for ev in rag.chat_stream(req.query, history=req.history, top_k=req.top_k):
                 yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
         except ValueError as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"

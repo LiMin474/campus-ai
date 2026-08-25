@@ -3,6 +3,7 @@ package com.campus.product.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.ai.service.AiService;
 import com.campus.category.entity.Category;
 import com.campus.category.mapper.CategoryMapper;
 import com.campus.product.dto.ProductCreateRequest;
@@ -42,19 +43,39 @@ public class ProductService {
     private final ProductAttachmentMapper productAttachmentMapper;
     private final CategoryMapper categoryMapper;
     private final UserMapper userMapper;
+    private final AiService aiService;
 
     public ProductService(
         ProductMapper productMapper,
         ProductImageMapper productImageMapper,
         ProductAttachmentMapper productAttachmentMapper,
         CategoryMapper categoryMapper,
-        UserMapper userMapper
+        UserMapper userMapper,
+        AiService aiService
     ) {
         this.productMapper = productMapper;
         this.productImageMapper = productImageMapper;
         this.productAttachmentMapper = productAttachmentMapper;
         this.categoryMapper = categoryMapper;
         this.userMapper = userMapper;
+        this.aiService = aiService;
+    }
+
+    /** 商品向量化文本：标题 + 描述（与 seed_chroma.py 保持一致） */
+    private String vectorText(Product p) {
+        String title = p.getTitle() == null ? "" : p.getTitle().trim();
+        String desc = p.getDescription() == null ? "" : p.getDescription().trim();
+        return (title + " " + desc).trim();
+    }
+
+    /** 增量同步到向量库（发布/编辑后调用，失败不影响主流程） */
+    private void syncToVector(Product p) {
+        aiService.ragIndexIncremental(
+            p.getId(),
+            vectorText(p),
+            p.getPrice() != null ? p.getPrice().doubleValue() : null,
+            p.getConditionLabel()
+        );
     }
 
     @Transactional
@@ -80,6 +101,8 @@ public class ProductService {
 
         saveImages(product.getId(), request.getImageUrls());
         saveAttachments(product.getId(), request.getAttachments());
+        // 增量同步到向量库，AI 搜索立即可见
+        syncToVector(product);
         return product.getId();
     }
 
@@ -120,6 +143,8 @@ public class ProductService {
                 .eq(ProductAttachment::getProductId, productId));
             saveAttachments(productId, request.getAttachments());
         }
+        // 编辑后增量覆盖向量库，AI 搜索用新信息
+        syncToVector(product);
     }
 
     @Transactional
@@ -131,6 +156,8 @@ public class ProductService {
         product.setStatus(STATUS_OFF_SHELF);
         product.setUpdatedAt(LocalDateTime.now());
         productMapper.updateById(product);
+        // 下架后从向量库移除，AI 搜索不再返回
+        aiService.ragIndexDelete(productId);
     }
 
     public Page<ProductListItemResponse> pageItems(Long categoryId, String keyword, String sort, int page, int size) {

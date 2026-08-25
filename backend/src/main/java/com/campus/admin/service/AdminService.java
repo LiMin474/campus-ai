@@ -12,6 +12,7 @@ import com.campus.admin.dto.AdminOrderResponse;
 import com.campus.admin.dto.AdminPostResponse;
 import com.campus.admin.dto.AdminProductResponse;
 import com.campus.admin.dto.PageResponse;
+import com.campus.ai.service.AiService;
 import com.campus.category.entity.Category;
 import com.campus.category.mapper.CategoryMapper;
 import com.campus.community.entity.CommunityPost;
@@ -44,15 +45,18 @@ public class AdminService {
     private final TradeOrderMapper orderMapper;
     private final CommunityPostMapper postMapper;
     private final CategoryMapper categoryMapper;
+    private final AiService aiService;
 
     public AdminService(UserMapper userMapper, ProductMapper productMapper, ReportMapper reportMapper, 
-                       TradeOrderMapper orderMapper, CommunityPostMapper postMapper, CategoryMapper categoryMapper) {
+                       TradeOrderMapper orderMapper, CommunityPostMapper postMapper, CategoryMapper categoryMapper,
+                       AiService aiService) {
         this.userMapper = userMapper;
         this.productMapper = productMapper;
         this.reportMapper = reportMapper;
         this.orderMapper = orderMapper;
         this.postMapper = postMapper;
         this.categoryMapper = categoryMapper;
+        this.aiService = aiService;
     }
 
     public AdminDashboardResponse dashboard() {
@@ -320,6 +324,8 @@ public class AdminService {
             throw new IllegalArgumentException("商品不存在");
         }
         productMapper.deleteById(productId);
+        // 删除后从向量库移除，AI 搜索不再返回
+        aiService.ragIndexDelete(productId);
     }
 
     @Transactional

@@ -140,19 +140,93 @@ public class AiService {
     }
 
     /**
+     * RAG 增量灌库：按 id 覆盖写入向量库（商品发布/编辑时调用）。
+     * 失败不抛异常（记 warning），避免影响商品主业务流程。
+     *
+     * @param productId 商品 id
+     * @param text      向量化文本（标题 + 描述）
+     * @param price     价格（可为 null）
+     * @param condition 成色（可为 null）
+     */
+    public void ragIndexIncremental(Long productId, String text, Double price, String condition) {
+        if (productId == null || !StringUtils.hasText(text)) {
+            return;
+        }
+        ObjectNode body = objectMapper.createObjectNode();
+        ArrayNode arr = objectMapper.createArrayNode();
+        ObjectNode item = objectMapper.createObjectNode();
+        item.put("id", String.valueOf(productId));
+        item.put("text", text);
+        if (price != null) {
+            item.put("price", price);
+        }
+        if (StringUtils.hasText(condition)) {
+            item.put("condition", condition);
+        }
+        arr.add(item);
+        body.set("products", arr);
+        try {
+            postToPythonRaw("/api/ai/rag/index/incremental", body, "ragIndexIncremental");
+        } catch (Exception ex) {
+            logger.warn("调用 Python ai-service 增量灌库失败: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * RAG 删除向量：商品下架/删除时调用，从向量库移除对应记录。
+     * 失败不抛异常（记 warning），避免影响商品主业务流程。
+     *
+     * @param productId 商品 id
+     */
+    public void ragIndexDelete(Long productId) {
+        if (productId == null) {
+            return;
+        }
+        try {
+            postToPythonRaw(
+                "/api/ai/rag/index/" + productId,
+                objectMapper.createObjectNode(),
+                "ragIndexDelete",
+                "DELETE"
+            );
+        } catch (Exception ex) {
+            logger.warn("调用 Python ai-service 删除向量失败: {}", ex.getMessage());
+        }
+    }
+
+    /**
      * RAG 流式对话：转发 Python 的 SSE 流，逐块写入下游输出流（打字机效果）。
      * 异常时往输出流写入一个 error 事件并结束。
      *
-     * @param query 用户问题
-     * @param out   下游输出流（HttpServletResponse.getOutputStream()）
+     * @param query   用户问题
+     * @param history 对话历史（多轮），每项含 role + content + 可选 sources
+     * @param out     下游输出流（HttpServletResponse.getOutputStream()）
      */
-    public void ragChatStream(String query, java.io.OutputStream out) {
+    public void ragChatStream(String query, List<Map<String, Object>> history, java.io.OutputStream out) {
         if (!StringUtils.hasText(query)) {
             throw new IllegalArgumentException("查询不能为空");
         }
         HttpURLConnection conn = null;
         try {
-            String jsonBody = objectMapper.writeValueAsString(Map.of("query", query.trim()));
+            // 构建请求体：query + history（多轮对话）
+            ObjectNode body = objectMapper.createObjectNode();
+            body.put("query", query.trim());
+            if (history != null && !history.isEmpty()) {
+                ArrayNode histArr = objectMapper.createArrayNode();
+                for (Map<String, Object> m : history) {
+                    ObjectNode item = objectMapper.createObjectNode();
+                    item.put("role", String.valueOf(m.getOrDefault("role", "user")));
+                    item.put("content", String.valueOf(m.getOrDefault("content", "")));
+                    // 工具结果记忆：assistant 消息可带 sources（上轮检索的商品列表）
+                    Object sources = m.get("sources");
+                    if (sources instanceof List && !((List<?>) sources).isEmpty()) {
+                        item.set("sources", objectMapper.valueToTree(sources));
+                    }
+                    histArr.add(item);
+                }
+                body.set("history", histArr);
+            }
+            String jsonBody = objectMapper.writeValueAsString(body);
             byte[] bodyBytes = jsonBody.getBytes(StandardCharsets.UTF_8);
 
             conn = (HttpURLConnection) URI.create(aiServiceBaseUrl + "/api/ai/rag/chat/stream").toURL().openConnection();
@@ -216,22 +290,30 @@ public class AiService {
 
 // 底层通用 HTTP 工具，发送 POST‑JSON 请求访问 FastAPI
     private String postToPythonRaw(String path, Object bodyObj, String tag) throws Exception {
+        return postToPythonRaw(path, bodyObj, tag, "POST");
+    }
+
+    private String postToPythonRaw(String path, Object bodyObj, String tag, String method) throws Exception {
         HttpURLConnection conn = null;
         try {
             String jsonBody = objectMapper.writeValueAsString(bodyObj);
             byte[] bodyBytes = jsonBody.getBytes(StandardCharsets.UTF_8);
-            logger.info("调用 Python ai-service: url={}, tag={}", aiServiceBaseUrl + path, tag);
+            logger.info("调用 Python ai-service: url={}, tag={}, method={}", aiServiceBaseUrl + path, tag, method);
 
             conn = (HttpURLConnection) URI.create(aiServiceBaseUrl + path).toURL().openConnection();
-            conn.setRequestMethod("POST");
+            conn.setRequestMethod(method);
             conn.setConnectTimeout(10_000);
             conn.setReadTimeout(timeoutSeconds * 1000);
-            conn.setDoOutput(true);
+            if ("POST".equals(method)) {
+                conn.setDoOutput(true);
+            }
             conn.setRequestProperty("Content-Type", "application/json; charset=UTF-8");
             conn.setRequestProperty("Content-Length", String.valueOf(bodyBytes.length));
-            try (OutputStream os = conn.getOutputStream()) {
-                os.write(bodyBytes);
-                os.flush();
+            if ("POST".equals(method)) {
+                try (OutputStream os = conn.getOutputStream()) {
+                    os.write(bodyBytes);
+                    os.flush();
+                }
             }
 
             int code = conn.getResponseCode();
