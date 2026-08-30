@@ -124,15 +124,29 @@
       </div>
     </el-main>
 
-    <!-- AI 助手浮动球：右下角悬浮，点击进入对话页 -->
+    <!-- AI 助手浮动球：右下角悬浮，可拖拽，点击弹出侧边抽屉 -->
     <div
-      v-if="route.path !== '/ai-chat'"
       class="ai-fab"
-      title="AI 购物助手"
-      @click="router.push('/ai-chat')"
+      :class="{ dragging: fabDragging, speaking: aiDrawerVisible }"
+      :style="fabStyle"
+      @mousedown.prevent="fabDragStart"
+      @touchstart.prevent="fabDragStart"
+      @click="onFabClick"
+      @mouseenter="fabHover = true"
+      @mouseleave="fabHover = false"
     >
-      <el-icon :size="26"><MagicStick /></el-icon>
+      <div class="ai-fab-tooltip" v-show="fabHover && !fabDragging">
+        点击我，帮你挑选物品 <span class="dog-emoji">U•ェ•*U</span>
+      </div>
+      <img
+        :src="aiDrawerVisible ? '/dog-speaking.png' : (fabDragging ? '/dog-active.png' : '/dog-idle.png')"
+        alt="AI助手"
+        class="ai-fab-img"
+      />
     </div>
+
+    <!-- AI 助手侧边抽屉 -->
+    <AiChatDrawer v-model="aiDrawerVisible" />
   </el-container>
 </template>
 
@@ -141,12 +155,66 @@ import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "./stores/auth";
 import { ArrowDown, Search, ChatDotRound, Plus, MagicStick } from "@element-plus/icons-vue";
+import AiChatDrawer from "./views/AiChatDrawer.vue";
 
 const auth = useAuthStore();
 const router = useRouter();
 const route = useRoute();
 const searchKeyword = ref("");
 const defaultAvatar = "https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png";
+const aiDrawerVisible = ref(false);
+
+// ---- AI 浮动球拖拽 ----
+const fabX = ref(window.innerWidth - 28 - 220);
+const fabY = ref(window.innerHeight - 28 - 220);
+const fabDragging = ref(false);
+const fabMoved = ref(false);
+const fabHover = ref(false);
+
+const fabStyle = computed(() => ({
+  left: fabX.value + "px",
+  top: fabY.value + "px",
+  position: "fixed" as const,
+  zIndex: 2000,
+}));
+
+function fabDragStart(e: MouseEvent | TouchEvent) {
+  fabMoved.value = false;
+  fabDragging.value = true;
+  const startX = "touches" in e ? e.touches[0].clientX : e.clientX;
+  const startY = "touches" in e ? e.touches[0].clientY : e.clientY;
+  const origX = fabX.value;
+  const origY = fabY.value;
+
+  function onMove(ev: MouseEvent | TouchEvent) {
+    const cx = "touches" in ev ? ev.touches[0].clientX : ev.clientX;
+    const cy = "touches" in ev ? ev.touches[0].clientY : ev.clientY;
+    const dx = cx - startX;
+    const dy = cy - startY;
+    if (Math.abs(dx) > 1 || Math.abs(dy) > 1) fabMoved.value = true;
+    fabX.value = Math.max(0, Math.min(window.innerWidth - 200, origX + dx));
+    fabY.value = Math.max(0, Math.min(window.innerHeight - 200, origY + dy));
+  }
+
+  function onUp() {
+    fabDragging.value = false;
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+    window.removeEventListener("touchmove", onMove);
+    window.removeEventListener("touchend", onUp);
+  }
+
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+  window.addEventListener("touchmove", onMove, { passive: true });
+  window.addEventListener("touchend", onUp);
+}
+
+function onFabClick() {
+  // 拖拽后不触发点击
+  if (fabMoved.value) return;
+  aiDrawerVisible.value = true;
+}
 
 const menuActive = computed(() => {
   if (route.path === "/") return "/";
@@ -355,26 +423,79 @@ body,
   padding: 24px 16px 48px;
 }
 
-/* AI 助手浮动球：右下角悬浮 */
+/* AI 助手浮动球：右下角悬浮，可拖拽 */
 .ai-fab {
-  position: fixed;
-  right: 28px;
-  bottom: 28px;
-  width: 56px;
-  height: 56px;
+  width: 220px;
+  height: 220px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #0f9d58, #0bb767);
-  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  box-shadow: 0 6px 18px rgba(15, 157, 88, 0.35);
-  z-index: 2000;
-  transition: transform 0.2s, box-shadow 0.2s;
+  cursor: grab;
+  box-shadow: none;
+  transition: transform 0.2s;
+  user-select: none;
+  touch-action: none;
 }
 .ai-fab:hover {
   transform: scale(1.08);
-  box-shadow: 0 8px 24px rgba(15, 157, 88, 0.5);
+}
+.ai-fab.dragging {
+  cursor: grabbing;
+  transform: scale(1.1);
+}
+.ai-fab.speaking {
+  animation: none;
+}
+.ai-fab-img {
+  width: 180px;
+  height: 180px;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+}
+.ai-fab.speaking .ai-fab-img {
+  filter: drop-shadow(0 0 8px rgba(15, 157, 88, 0.5));
+}
+/* 小狗上方的悬浮提示框 */
+.ai-fab-tooltip {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: #fff;
+  color: #333;
+  font-size: 14px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  line-height: 1.5;
+  text-align: center;
+  pointer-events: none;
+  user-select: none;
+  animation: fab-tooltip-in 0.2s ease-out;
+}
+.ai-fab-tooltip::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 5px solid transparent;
+  border-top-color: #fff;
+}
+.dog-emoji {
+  font-size: 14px;
+  line-height: 1;
+}
+@keyframes fab-tooltip-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+@keyframes ai-fab-pulse {
+  0%, 100% { box-shadow: 0 6px 18px rgba(15, 157, 88, 0.35); }
+  50% { box-shadow: 0 6px 24px rgba(15, 157, 88, 0.6); }
 }
 </style>

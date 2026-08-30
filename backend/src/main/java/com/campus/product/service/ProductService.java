@@ -6,6 +6,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.ai.service.AiService;
 import com.campus.category.entity.Category;
 import com.campus.category.mapper.CategoryMapper;
+import com.campus.chat.dto.StartConversationRequest;
+import com.campus.chat.service.ChatService;
 import com.campus.product.dto.ProductCreateRequest;
 import com.campus.product.dto.ProductDetailResponse;
 import com.campus.product.dto.ProductListItemResponse;
@@ -19,6 +21,10 @@ import com.campus.product.mapper.ProductMapper;
 import com.campus.user.entity.User;
 import com.campus.user.mapper.UserMapper;
 import com.campus.user.util.CreditRules;
+import com.campus.wanted.entity.Wanted;
+import com.campus.wanted.mapper.WantedMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -44,6 +50,9 @@ public class ProductService {
     private final CategoryMapper categoryMapper;
     private final UserMapper userMapper;
     private final AiService aiService;
+    private final ChatService chatService;
+    private final WantedMapper wantedMapper;
+    private final ObjectMapper objectMapper;
 
     public ProductService(
         ProductMapper productMapper,
@@ -51,7 +60,10 @@ public class ProductService {
         ProductAttachmentMapper productAttachmentMapper,
         CategoryMapper categoryMapper,
         UserMapper userMapper,
-        AiService aiService
+        AiService aiService,
+        ChatService chatService,
+        WantedMapper wantedMapper,
+        ObjectMapper objectMapper
     ) {
         this.productMapper = productMapper;
         this.productImageMapper = productImageMapper;
@@ -59,6 +71,9 @@ public class ProductService {
         this.categoryMapper = categoryMapper;
         this.userMapper = userMapper;
         this.aiService = aiService;
+        this.chatService = chatService;
+        this.wantedMapper = wantedMapper;
+        this.objectMapper = objectMapper;
     }
 
     /** 商品向量化文本：标题 + 描述（与 seed_chroma.py 保持一致） */
@@ -76,6 +91,66 @@ public class ProductService {
             p.getPrice() != null ? p.getPrice().doubleValue() : null,
             p.getConditionLabel()
         );
+    }
+
+    /** 系统助手的 user_id（在 user 表必须存在） */
+    private static final long SYSTEM_USER_ID = 9999L;
+
+    /**
+     * 阶段二 · 主动通知：商品发布后自动匹配求购，LLM 验证后给买家发聊天通知。
+     * 全部 try-catch 静默失败，不影响商品发布主流程。
+     */
+    private void triggerMatchNotification(Product product) {
+        try {
+            String productText = vectorText(product);
+            double price = product.getPrice() != null ? product.getPrice().doubleValue() : 0;
+            // 1. 检索候选求购（top 3）
+            String matchJson = aiService.ragMatchWanteds(productText, price, 3);
+            JsonNode matchRoot = objectMapper.readTree(matchJson);
+            JsonNode matches = matchRoot.path("matches");
+            if (!matches.isArray() || matches.isEmpty()) {
+                return;
+            }
+            // 2. LLM 验证
+            String verifyJson = aiService.ragVerifyMatches(
+                product.getTitle(),
+                product.getDescription(),
+                price,
+                product.getConditionLabel(),
+                matches.toString()
+            );
+            JsonNode verifyRoot = objectMapper.readTree(verifyJson);
+            JsonNode matched = verifyRoot.path("matched");
+            if (!matched.isArray() || matched.isEmpty()) {
+                return;
+            }
+            // 3. 对每个通过验证的求购，发通知
+            String productLink = "（商品ID: " + product.getId() + "）";
+            String productBrief = product.getTitle() + "（¥" + price + "）" + productLink;
+            for (JsonNode m : matched) {
+                String wantedIdStr = m.path("wanted_id").asText(null);
+                if (wantedIdStr == null || wantedIdStr.isBlank()) {
+                    continue;
+                }
+                Long wantedId = Long.parseLong(wantedIdStr);
+                Wanted wanted = wantedMapper.selectById(wantedId);
+                if (wanted == null) {
+                    continue;
+                }
+                Long buyerId = wanted.getUserId();
+                // 建或取已有会话（系统助手 ↔ 买家，GENERAL 类型）
+                StartConversationRequest startReq = new StartConversationRequest();
+                startReq.setPeerUserId(buyerId);
+                startReq.setContextType("GENERAL");
+                startReq.setContextId(0L);
+                Long convId = chatService.startOrGet(SYSTEM_USER_ID, startReq);
+                // 发消息
+                String msg = "🔔 有人发布了符合你求购「" + wanted.getTitle() + "」的商品：" + productBrief;
+                chatService.sendMessage(convId, SYSTEM_USER_ID, msg);
+            }
+        } catch (Exception ex) {
+            logger.warn("匹配求购并通知失败（不影响主流程）: {}", ex.getMessage());
+        }
     }
 
     @Transactional
@@ -103,6 +178,8 @@ public class ProductService {
         saveAttachments(product.getId(), request.getAttachments());
         // 增量同步到向量库，AI 搜索立即可见
         syncToVector(product);
+        // 匹配求购并通知（异步，失败静默）
+        triggerMatchNotification(product);
         return product.getId();
     }
 

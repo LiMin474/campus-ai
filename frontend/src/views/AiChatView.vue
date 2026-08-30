@@ -3,8 +3,11 @@
     <!-- 顶栏：全宽绿色背景 -->
     <div class="chat-header">
       <div class="header-inner">
-        <h1 class="header-title">AI 购物助手</h1>
-        <p class="header-sub">描述你的需求，我来帮你找合适的校园二手好物</p>
+        <img src="/dog-idle.png" class="header-dog" alt="小狗" />
+        <div class="header-text">
+          <h1 class="header-title">AI 购物助手</h1>
+          <p class="header-sub">描述你的需求，我来帮你找合适的校园二手好物</p>
+        </div>
       </div>
     </div>
 
@@ -436,10 +439,23 @@ async function send() {
   background-color: #0f9d58;
   color: #fff;
   padding: 20px 16px;
+  border-radius: 12px 12px 0 0;
 }
 .header-inner {
   max-width: 900px;
   margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.header-dog {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.header-text {
+  flex: 1;
 }
 .header-title {
   font-size: 20px;

@@ -69,6 +69,78 @@ class ChatResponse(BaseModel):  # RAG 问答返回：大模型生成的回答 + 
 
 
 # ------------------------------------------------------------------
+# 求购向量库相关模型
+# ------------------------------------------------------------------
+class WantedItem(BaseModel):
+    id: str | int
+    text: str
+    budgetMin: float | None = None
+    budgetMax: float | None = None
+    status: str | None = None
+
+
+class WantedIndexRequest(BaseModel):
+    wanteds: List[WantedItem]
+
+
+class MatchWantedsRequest(BaseModel):
+    product_id: str | int | None = None
+    product_text: str
+    product_price: float
+
+
+class MatchWantedItem(BaseModel):
+    wanted_id: str
+    title: str
+    distance: float
+    budget_min: float | None = None
+    budget_max: float | None = None
+
+
+class MatchWantedsResponse(BaseModel):
+    matches: List[MatchWantedItem]
+
+
+class MatchProductsRequest(BaseModel):
+    query_text: str
+    max_price: float | None = None
+    top_k: int = 3
+
+
+class MatchProductItem(BaseModel):
+    id: str
+    title: str
+    price: float | None = None
+    condition: str | None = None
+    distance: float
+
+
+class MatchProductsResponse(BaseModel):
+    items: List[MatchProductItem]
+
+
+class VerifyCandidate(BaseModel):
+    """候选求购（来自 match-wanteds 检索结果）"""
+    wanted_id: str
+    title: str
+    distance: float
+    budget_min: float | None = None
+    budget_max: float | None = None
+
+
+class VerifyMatchesRequest(BaseModel):
+    product_title: str
+    product_desc: str = ""
+    product_price: float
+    condition_label: str | None = None
+    candidates: List[VerifyCandidate]
+
+
+class VerifyMatchesResponse(BaseModel):
+    matched: List[VerifyCandidate]
+
+
+# ------------------------------------------------------------------
 # 依赖：拿 RagService 单例
 # ------------------------------------------------------------------
 async def get_rag() -> RagService:
@@ -126,6 +198,83 @@ async def index_delete(product_id: str | int, rag: RagService = Depends(get_rag)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     return IndexResponse(indexed=deleted)
+
+
+@router.post("/index/wanted", response_model=IndexResponse)
+async def index_wanted(req: WantedIndexRequest, rag: RagService = Depends(get_rag)) -> IndexResponse:
+    """求购入库：发布/编辑求购时调用，把求购数据存进向量库"""
+    try:
+        wanteds = [
+            {
+                "id": w.id,
+                "text": w.text,
+                "budgetMin": w.budgetMin,
+                "budgetMax": w.budgetMax,
+                "status": w.status,
+            }
+            for w in req.wanteds
+        ]
+        count = rag.upsert_wanteds(wanteds)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return IndexResponse(indexed=count)
+
+
+@router.delete("/index/wanted/{wanted_id}", response_model=IndexResponse)
+async def index_wanted_delete(wanted_id: str | int, rag: RagService = Depends(get_rag)) -> IndexResponse:
+    """按求购 id 从向量库删除（求购关闭/删除时调用）"""
+    try:
+        deleted = rag.delete_wanted(wanted_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return IndexResponse(indexed=deleted)
+
+
+@router.post("/match-wanteds", response_model=MatchWantedsResponse)
+async def match_wanteds(req: MatchWantedsRequest, rag: RagService = Depends(get_rag)) -> MatchWantedsResponse:
+    """商品匹配求购：输入商品信息，返回匹配的 OPEN 状态求购列表。"""
+    try:
+        matches = rag.match_wanteds(req.product_text, req.product_price)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return MatchWantedsResponse(
+        matches=[MatchWantedItem(**m) for m in matches],
+    )
+
+
+@router.post("/match-products", response_model=MatchProductsResponse)
+async def match_products(req: MatchProductsRequest, rag: RagService = Depends(get_rag)) -> MatchProductsResponse:
+    """求购找商品（阶段一 · 被动匹配）：用求购文本检索商品库，返回高相似度商品。"""
+    try:
+        items = rag.match_products(
+            req.query_text,
+            max_price=req.max_price,
+            top_k=req.top_k,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return MatchProductsResponse(
+        items=[MatchProductItem(**it) for it in items],
+    )
+
+
+@router.post("/verify-matches", response_model=VerifyMatchesResponse)
+async def verify_matches(req: VerifyMatchesRequest, rag: RagService = Depends(get_rag)):
+    """LLM 批量验证候选求购，返回真正匹配的。"""
+    try:
+        candidates_dict = [c.model_dump() for c in req.candidates]
+        matched = await rag.verify_matches(
+            req.product_title,
+            req.product_desc,
+            req.product_price,
+            req.condition_label,
+            candidates_dict,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return VerifyMatchesResponse(
+        matched=[VerifyCandidate(**m) for m in matched],
+    )
 
 
 @router.post("/search", response_model=SearchResponse)

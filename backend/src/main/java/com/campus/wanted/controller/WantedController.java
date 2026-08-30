@@ -8,6 +8,7 @@ package com.campus.wanted.controller;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.campus.common.api.ApiResponse;
 import com.campus.common.util.SecurityUtils;
+import com.campus.wanted.dto.MatchedProduct;
 import com.campus.wanted.dto.WantedRequest;
 import com.campus.wanted.dto.WantedResponse;
 import com.campus.wanted.service.WantedService;
@@ -20,6 +21,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
 
 @RestController
 @RequestMapping("/api/wanted")
@@ -54,6 +57,14 @@ public class WantedController {
     @GetMapping("/{id}")
     public ApiResponse<WantedResponse> detail(@PathVariable Long id) {
         return ApiResponse.success(wantedService.detail(id));
+    }
+
+    @GetMapping("/{id}/matches")
+    public ApiResponse<List<MatchedProduct>> matches(
+        @PathVariable Long id,
+        @RequestParam(defaultValue = "3") int topK
+    ) {
+        return ApiResponse.success(wantedService.matchProducts(id, topK));
     }
 
     @PostMapping

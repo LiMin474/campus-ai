@@ -247,6 +247,10 @@ class RagService:
 
         client = chromadb.PersistentClient(path=chroma_path)
         self.collection = client.get_or_create_collection(collection_name)
+        self.wanted_collection = client.get_or_create_collection(
+            name="campus_wanteds",
+            metadata={"hnsw:space": "cosine"},
+        )
 
     # ------------------------------------------------------------------
     # index: 全量重灌（清空再写入）
@@ -319,6 +323,221 @@ class RagService:
             return 0
         self.collection.delete(ids=existing)
         return len(existing)
+
+    # ------------------------------------------------------------------
+    # wanted: 求购向量库（独立 collection）
+    # ------------------------------------------------------------------
+    def upsert_wanteds(self, wanteds: List[Dict[str, Any]]) -> int:
+        """求购入库：把求购数据存进 wanted_collection（求购发布/编辑时调用）"""
+        if not wanteds:
+            return 0
+        ids = [f"wanted_{w['id']}" for w in wanteds]
+        documents = [w["text"] for w in wanteds]
+        embeddings = self.embedding.encode(documents)
+        metadatas = [
+            {
+                k: v
+                for k, v in {
+                    "budget_min": w.get("budgetMin"),
+                    "budget_max": w.get("budgetMax"),
+                    "status": w.get("status", "OPEN"),
+                }.items()
+                if v is not None
+            }
+            for w in wanteds
+        ]
+        self.wanted_collection.upsert(
+            ids=ids,
+            documents=documents,
+            embeddings=embeddings,
+            metadatas=metadatas,
+        )
+        return len(ids)
+
+    def delete_wanted(self, wanted_id: str | int) -> int:
+        """按求购 id 从向量库删除（求购关闭/删除时调用）"""
+        wid = f"wanted_{wanted_id}"
+        try:
+            existing = self.wanted_collection.get(ids=[wid]).get("ids", [])
+        except Exception:
+            existing = []
+        if not existing:
+            return 0
+        self.wanted_collection.delete(ids=existing)
+        return len(existing)
+
+    def match_wanteds(self, product_text: str, product_price: float, top_k: int = 10) -> List[Dict[str, Any]]:
+        """商品匹配求购：输入商品信息，返回匹配的 OPEN 状态求购列表。
+
+        过滤条件：
+        1. 求购状态为 OPEN
+        2. 求购预算上限（budget_max）>= 商品价格
+        """
+        if not product_text or not product_text.strip():
+            return []
+
+        query_emb = self.embedding.encode([product_text])
+        result = self.wanted_collection.query(
+            query_embeddings=query_emb,
+            n_results=top_k,
+            include=["documents", "distances", "metadatas"],
+        )
+
+        ids = result.get("ids", [[]])[0]
+        documents = result.get("documents", [[]])[0]
+        distances = result.get("distances", [[]])[0]
+        metadatas = result.get("metadatas", [[]])[0]
+
+        matches = []
+        for i in range(len(ids)):
+            if i >= len(metadatas):
+                break
+            meta = metadatas[i] or {}
+            status = meta.get("status", "")
+            budget_max = meta.get("budget_max")
+            if status != "OPEN":
+                continue
+            if budget_max is not None and product_price > budget_max:
+                continue
+            raw_id = ids[i]
+            wanted_id = raw_id.replace("wanted_", "", 1) if raw_id.startswith("wanted_") else raw_id
+            matches.append({
+                "wanted_id": wanted_id,
+                "title": documents[i],
+                "distance": float(distances[i]) if i < len(distances) else 0.0,
+                "budget_min": meta.get("budget_min"),
+                "budget_max": budget_max,
+            })
+        return matches
+
+    async def verify_matches(
+        self,
+        product_title: str,
+        product_desc: str,
+        product_price: float,
+        condition_label: str | None,
+        candidates: list[dict],
+    ) -> list[dict]:
+        """LLM 批量验证候选求购，返回真正匹配的。
+
+        Args:
+            product_title: 商品标题
+            product_desc: 商品描述
+            product_price: 商品价格
+            condition_label: 成色标签
+            candidates: 候选求购列表，每项含 {wanted_id, title, budget_min, budget_max}
+                       （最多 3 条，由 match_wanteds 返回）
+
+        Returns:
+            只保留 LLM 判定为"匹配"的候选，每项原始字段不变
+        """
+        import json
+
+        if not candidates:
+            return []
+
+        prompt_lines = []
+        prompt_lines.append("你是校园二手平台的匹配审核员。判断以下商品是否符合候选求购需求。可匹配 0~3 条。")
+        prompt_lines.append("")
+        prompt_lines.append("匹配标准：")
+        prompt_lines.append('- 品类一致（「平板电脑」 ≠ 「平板支撑器」）')
+        prompt_lines.append("- 价格在求购预算范围内")
+        prompt_lines.append("- 用途/场景相符")
+        prompt_lines.append("")
+        prompt_lines.append("只返回 JSON，不要多余解释：")
+        prompt_lines.append('{"match_ids": [完全匹配的编号], "reasons": {"编号": "一句话理由"}}')
+        prompt_lines.append("")
+        desc_part = product_desc[:150] if product_desc else ""
+        cond_part = f"，{condition_label}" if condition_label else ""
+        prompt_lines.append(f"商品：{product_title}{cond_part}，{product_price}元")
+        for i, c in enumerate(candidates, 1):
+            title = c.get("title", "")[:80]
+            bmin = c.get("budget_min")
+            bmax = c.get("budget_max")
+            budget_str = f"预算"
+            if bmin is not None and bmax is not None:
+                budget_str += f"{bmin}~{bmax}元"
+            elif bmax is not None:
+                budget_str += f"≤{bmax}元"
+            elif bmin is not None:
+                budget_str += f"≥{bmin}元"
+            else:
+                budget_str += "无限制"
+            prompt_lines.append(f"候选求购{i}：{title}，{budget_str}")
+        prompt_lines.append("")
+        desc_detail = desc_part[:200] if desc_part else ""
+        prompt_lines.append(f"补充描述：{desc_detail}" if desc_detail else "")
+        prompt = "\n".join(prompt_lines)
+
+        # 调 LLM 验证
+        messages = [
+            {"role": "system", "content": "你是一个 JSON 输出助手，只输出 JSON。"},
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            result = await self.llm.chat_complete(messages)
+            content = result.get("content", "")
+            if not content:
+                return []
+            # 解析 JSON
+            parsed = json.loads(content)
+            match_ids = parsed.get("match_ids", [])
+            if not match_ids:
+                return []
+            # 只保留匹配的候选
+            matched = [c for i, c in enumerate(candidates, 1) if i in match_ids]
+            return matched
+        except Exception:
+            return []
+
+    def match_products(self, query_text: str, max_price: float | None = None, top_k: int = 3,
+                       distance_threshold: float = 0.85) -> List[Dict[str, Any]]:
+        """求购找商品（阶段一 · 被动匹配）：用求购文本检索商品库，返回高相似度商品。
+
+        过滤条件：
+        1. 预算过滤：若求购有预算上限（max_price），商品价格不超过它
+        2. 相似度过滤：distance > distance_threshold 的商品视为"很不相符"，剔除
+        """
+        if not query_text or not query_text.strip():
+            return []
+
+        # 多拉一些避免过滤后不足，再截断到 top_k
+        fetch_k = max(top_k * 4, 10)
+        query_emb = self.embedding.encode([query_text])
+        result = self.collection.query(
+            query_embeddings=query_emb,
+            n_results=fetch_k,
+            include=["documents", "distances", "metadatas"],
+        )
+
+        ids = result.get("ids", [[]])[0]
+        documents = result.get("documents", [[]])[0]
+        distances = result.get("distances", [[]])[0]
+        metadatas = result.get("metadatas", [[]])[0]
+
+        items = []
+        for i in range(len(ids)):
+            if i >= len(metadatas):
+                break
+            meta = metadatas[i] or {}
+            dist = float(distances[i]) if i < len(distances) else 0.0
+            # 相似度阈值过滤：太不相关的不展示
+            if dist > distance_threshold:
+                continue
+            price = meta.get("price")
+            # 预算过滤：超预算的不展示
+            if max_price is not None and price is not None and price > max_price:
+                continue
+            items.append({
+                "id": ids[i] if i < len(ids) else "",
+                "title": documents[i],
+                "price": price,
+                "condition": meta.get("condition"),
+                "distance": dist,
+            })
+            if len(items) >= top_k:
+                break
+        return items
 
     # ------------------------------------------------------------------
     # search: 纯检索（带 metadata）

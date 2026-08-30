@@ -3,16 +3,24 @@ package com.campus.wanted.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.campus.ai.service.AiService;
 import com.campus.category.entity.Category;
 import com.campus.category.mapper.CategoryMapper;
+import com.campus.product.entity.Product;
+import com.campus.product.entity.ProductImage;
+import com.campus.product.mapper.ProductImageMapper;
+import com.campus.product.mapper.ProductMapper;
 import com.campus.user.entity.User;
 import com.campus.user.mapper.UserMapper;
+import com.campus.wanted.dto.MatchedProduct;
 import com.campus.wanted.dto.WantedRequest;
 import com.campus.wanted.dto.WantedResponse;
 import com.campus.wanted.entity.Wanted;
 import com.campus.wanted.entity.WantedImage;
 import com.campus.wanted.mapper.WantedImageMapper;
 import com.campus.wanted.mapper.WantedMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.util.Comparator;
 import java.util.List;
@@ -34,17 +42,29 @@ public class WantedService {
     private final WantedImageMapper wantedImageMapper;
     private final CategoryMapper categoryMapper;
     private final UserMapper userMapper;
+    private final ProductMapper productMapper;
+    private final ProductImageMapper productImageMapper;
+    private final AiService aiService;
+    private final ObjectMapper objectMapper;
 
     public WantedService(
         WantedMapper wantedMapper,
         WantedImageMapper wantedImageMapper,
         CategoryMapper categoryMapper,
-        UserMapper userMapper
+        UserMapper userMapper,
+        ProductMapper productMapper,
+        ProductImageMapper productImageMapper,
+        AiService aiService,
+        ObjectMapper objectMapper
     ) {
         this.wantedMapper = wantedMapper;
         this.wantedImageMapper = wantedImageMapper;
         this.categoryMapper = categoryMapper;
         this.userMapper = userMapper;
+        this.productMapper = productMapper;
+        this.productImageMapper = productImageMapper;
+        this.aiService = aiService;
+        this.objectMapper = objectMapper;
     }
 
     @Transactional
@@ -67,6 +87,8 @@ public class WantedService {
         wanted.setUpdatedAt(now);
         wantedMapper.insert(wanted);
         saveImages(wanted.getId(), request.getImageUrls());
+        // 求购入向量库（失败不影响主流程）
+        indexWantedToVector(wanted);
         return wanted.getId();
     }
 
@@ -89,6 +111,10 @@ public class WantedService {
         }
         wanted.setUpdatedAt(LocalDateTime.now());
         wantedMapper.updateById(wanted);
+        // 重新入向量库（覆盖更新）
+        if (STATUS_OPEN.equals(wanted.getStatus())) {
+            indexWantedToVector(wanted);
+        }
         if (request.getImageUrls() != null) {
             wantedImageMapper.delete(new LambdaQueryWrapper<WantedImage>().eq(WantedImage::getWantedId, id));
             saveImages(id, request.getImageUrls());
@@ -101,6 +127,8 @@ public class WantedService {
         wanted.setStatus(STATUS_CLOSED);
         wanted.setUpdatedAt(LocalDateTime.now());
         wantedMapper.updateById(wanted);
+        // 从向量库删除（关闭后不再被匹配）
+        aiService.ragDeleteWanted(wanted.getId());
     }
 
     @Transactional
@@ -109,6 +137,8 @@ public class WantedService {
         wanted.setStatus(STATUS_OPEN);
         wanted.setUpdatedAt(LocalDateTime.now());
         wantedMapper.updateById(wanted);
+        // 重新入向量库
+        indexWantedToVector(wanted);
     }
 
     public Page<WantedResponse> page(Long categoryId, String keyword, String sort, int page, int size) {
@@ -164,6 +194,98 @@ public class WantedService {
         int views = wanted.getViewCount() == null ? 0 : wanted.getViewCount();
         wanted.setViewCount(views + 1);
         return toResponses(List.of(wanted)).get(0);
+    }
+
+    /**
+     * 求购找商品（阶段一 · 被动匹配）：用求购文本调 Python 检索商品库，
+     * 再补全商品标题/价格/封面图返回。
+     * Python 不可用或无可匹配商品时返回空列表，不影响求购详情主流程。
+     */
+    public List<MatchedProduct> matchProducts(Long id, int topK) {
+        Wanted wanted = wantedMapper.selectById(id);
+        if (wanted == null) {
+            throw new IllegalArgumentException("求购不存在");
+        }
+        // 只对 OPEN 状态求购做匹配
+        if (!STATUS_OPEN.equals(wanted.getStatus())) {
+            return List.of();
+        }
+        String queryText = (wanted.getTitle() == null ? "" : wanted.getTitle().trim())
+            + " "
+            + (wanted.getDescription() == null ? "" : wanted.getDescription().trim());
+        Double maxPrice = wanted.getBudgetMax() != null ? wanted.getBudgetMax().doubleValue() : null;
+
+        String json = aiService.ragMatchProducts(queryText, maxPrice, topK);
+        List<Long> productIds = parseMatchedProductIds(json);
+        if (productIds.isEmpty()) {
+            return List.of();
+        }
+
+        // 补全商品信息 + 封面图（只保留在售商品）
+        List<ProductImage> allCovers = productImageMapper.selectList(new LambdaQueryWrapper<ProductImage>()
+            .in(ProductImage::getProductId, productIds)
+            .orderByAsc(ProductImage::getSortOrder));
+        Map<Long, String> coverMap = new java.util.HashMap<>();
+        for (ProductImage pi : allCovers) {
+            coverMap.putIfAbsent(pi.getProductId(), pi.getImageUrl());
+        }
+
+        Map<Long, Product> productMap = productMapper.selectBatchIds(productIds)
+            .stream()
+            .collect(Collectors.toMap(Product::getId, p -> p));
+
+        List<MatchedProduct> result = new java.util.ArrayList<>();
+        for (Long pid : productIds) {
+            Product p = productMap.get(pid);
+            if (p == null || !"ON_SHELF".equals(p.getStatus())) {
+                continue;
+            }
+            result.add(MatchedProduct.builder()
+                .productId(pid)
+                .title(p.getTitle())
+                .price(p.getPrice())
+                .coverImage(coverMap.get(pid))
+                .build());
+        }
+        return result;
+    }
+
+    /** 解析 Python 返回 JSON 中的商品 id 列表（保持顺序）。 */
+    private List<Long> parseMatchedProductIds(String json) {
+        List<Long> ids = new java.util.ArrayList<>();
+        try {
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode items = root.path("items");
+            if (items.isArray()) {
+                for (JsonNode it : items) {
+                    String rawId = it.path("id").asText(null);
+                    if (rawId != null && !rawId.isBlank()) {
+                        try {
+                            ids.add(Long.parseLong(rawId));
+                        } catch (NumberFormatException ignored) {
+                            // 跳过无法解析的 id
+                        }
+                    }
+                }
+            }
+        } catch (Exception ex) {
+            // 解析失败返回空
+        }
+        return ids;
+    }
+
+    /** 构建求购文本并调 Python 入向量库（失败静默）。 */
+    private void indexWantedToVector(Wanted wanted) {
+        String text = (wanted.getTitle() == null ? "" : wanted.getTitle().trim())
+            + " "
+            + (wanted.getDescription() == null ? "" : wanted.getDescription().trim());
+        aiService.ragIndexWanted(
+            wanted.getId(),
+            text.trim(),
+            wanted.getBudgetMin() != null ? wanted.getBudgetMin().doubleValue() : null,
+            wanted.getBudgetMax() != null ? wanted.getBudgetMax().doubleValue() : null,
+            wanted.getStatus()
+        );
     }
 
     private Wanted requireOwner(Long userId, Long id) {

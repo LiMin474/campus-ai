@@ -173,6 +173,33 @@ public class AiService {
     }
 
     /**
+     * 求购找商品（阶段一 · 被动匹配）：用求购文本检索商品库，返回高相似度商品。
+     * 失败降级返回空列表 JSON，不影响求购详情主流程。
+     *
+     * @param queryText 求购文本（标题 + 描述）
+     * @param maxPrice  求购预算上限（可为 null）
+     * @param topK      期望返回条数（默认 3）
+     * @return Python 返回的 JSON（含 items 数组），失败返回 {"items":[]}
+     */
+    public String ragMatchProducts(String queryText, Double maxPrice, int topK) {
+        if (!StringUtils.hasText(queryText)) {
+            return "{\"items\":[]}";
+        }
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("query_text", queryText.trim());
+        if (maxPrice != null) {
+            body.put("max_price", maxPrice);
+        }
+        body.put("top_k", topK);
+        try {
+            return postToPythonRaw("/api/ai/rag/match-products", body, "ragMatchProducts");
+        } catch (Exception ex) {
+            logger.warn("调用 Python ai-service 求购匹配失败: {}", ex.getMessage());
+            return "{\"items\":[]}";
+        }
+    }
+
+    /**
      * RAG 删除向量：商品下架/删除时调用，从向量库移除对应记录。
      * 失败不抛异常（记 warning），避免影响商品主业务流程。
      *
@@ -191,6 +218,130 @@ public class AiService {
             );
         } catch (Exception ex) {
             logger.warn("调用 Python ai-service 删除向量失败: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * 求购入库：发布/编辑求购时调用，把求购数据存进向量库。
+     * 失败不抛异常（记 warning），避免影响求购主业务流程。
+     *
+     * @param wantedId   求购 id
+     * @param text       向量化文本（标题 + 描述）
+     * @param budgetMin  预算下限（可为 null）
+     * @param budgetMax  预算上限（可为 null）
+     * @param status     求购状态（OPEN / CLOSED）
+     */
+    public void ragIndexWanted(Long wantedId, String text, Double budgetMin, Double budgetMax, String status) {
+        if (wantedId == null || !StringUtils.hasText(text)) {
+            return;
+        }
+        ObjectNode body = objectMapper.createObjectNode();
+        ArrayNode arr = objectMapper.createArrayNode();
+        ObjectNode item = objectMapper.createObjectNode();
+        item.put("id", String.valueOf(wantedId));
+        item.put("text", text);
+        if (budgetMin != null) {
+            item.put("budgetMin", budgetMin);
+        }
+        if (budgetMax != null) {
+            item.put("budgetMax", budgetMax);
+        }
+        if (StringUtils.hasText(status)) {
+            item.put("status", status);
+        }
+        arr.add(item);
+        body.set("wanteds", arr);
+        try {
+            postToPythonRaw("/api/ai/rag/index/wanted", body, "ragIndexWanted");
+        } catch (Exception ex) {
+            logger.warn("调用 Python ai-service 求购入库失败: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * 求购删向量：求购关闭/删除时调用，从向量库移除对应记录。
+     * 失败不抛异常（记 warning），避免影响求购主业务流程。
+     *
+     * @param wantedId 求购 id
+     */
+    public void ragDeleteWanted(Long wantedId) {
+        if (wantedId == null) {
+            return;
+        }
+        try {
+            postToPythonRaw(
+                "/api/ai/rag/index/wanted/" + wantedId,
+                objectMapper.createObjectNode(),
+                "ragDeleteWanted",
+                "DELETE"
+            );
+        } catch (Exception ex) {
+            logger.warn("调用 Python ai-service 删除求购向量失败: {}", ex.getMessage());
+        }
+    }
+
+    /**
+     * 商品匹配求购（阶段二 · 主动通知）：用商品文本检索求购向量库，返回候选求购列表。
+     * 失败降级返回空列表 JSON，不影响商品发布主流程。
+     *
+     * @param productText 商品文本（标题 + 描述）
+     * @param productPrice 商品价格
+     * @param topK 期望返回条数（默认 3）
+     * @return Python 返回的 JSON（含 matches 数组），失败返回 {"matches":[]}
+     */
+    public String ragMatchWanteds(String productText, double productPrice, int topK) {
+        if (!StringUtils.hasText(productText)) {
+            return "{\"matches\":[]}";
+        }
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("product_text", productText.trim());
+        body.put("product_price", productPrice);
+        body.put("top_k", topK);
+        try {
+            return postToPythonRaw("/api/ai/rag/match-wanteds", body, "ragMatchWanteds");
+        } catch (Exception ex) {
+            logger.warn("调用 Python ai-service 匹配求购失败: {}", ex.getMessage());
+            return "{\"matches\":[]}";
+        }
+    }
+
+    /**
+     * LLM 批量验证候选求购（阶段二 · 主动通知）：调 Python 让 LLM 判断哪些候选真正匹配。
+     * 失败降级返回空列表 JSON，不影响商品发布主流程。
+     *
+     * @param productTitle   商品标题
+     * @param productDesc    商品描述
+     * @param productPrice   商品价格
+     * @param conditionLabel 成色标签
+     * @param candidatesJson match-wanteds 返回的完整 matches JSON 数组字符串
+     * @return Python 返回的 JSON（含 matched 数组），失败返回 {"matched":[]}
+     */
+    public String ragVerifyMatches(String productTitle, String productDesc, double productPrice,
+                                   String conditionLabel, String candidatesJson) {
+        if (!StringUtils.hasText(productTitle) || !StringUtils.hasText(candidatesJson)) {
+            return "{\"matched\":[]}";
+        }
+        ObjectNode body = objectMapper.createObjectNode();
+        body.put("product_title", productTitle.trim());
+        body.put("product_desc", productDesc != null ? productDesc.trim() : "");
+        body.put("product_price", productPrice);
+        if (StringUtils.hasText(conditionLabel)) {
+            body.put("condition_label", conditionLabel.trim());
+        }
+        try {
+            // 解析 candidatesJson 为数组
+            ArrayNode arr = objectMapper.createArrayNode();
+            JsonNode raw = objectMapper.readTree(candidatesJson);
+            if (raw.isArray()) {
+                for (JsonNode item : raw) {
+                    arr.add(item);
+                }
+            }
+            body.set("candidates", arr);
+            return postToPythonRaw("/api/ai/rag/verify-matches", body, "ragVerifyMatches");
+        } catch (Exception ex) {
+            logger.warn("调用 Python ai-service 验证匹配失败: {}", ex.getMessage());
+            return "{\"matched\":[]}";
         }
     }
 
